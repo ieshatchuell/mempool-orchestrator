@@ -66,9 +66,8 @@ check:
     @echo "{{green}}🛠️  Performing System Health Check...{{reset}}"
     @echo "\n[1/2] Python Environment (via UV):"
     @uv run python --version
-    @echo "\n[2/2] Docker Connectivity:"
-    @# Simplificamos el formato para evitar conflictos de parsing
-    @docker ps --format "table {{{{.Names}}}}\t{{{{.Status}}}}" || echo "{{red}}❌ Docker daemon is not reachable{{reset}}"
+    @echo "\n[2/2] Infra Status:"
+    @cd infra && docker compose ps
 
 # Sync project dependencies from pyproject.toml
 sync:
