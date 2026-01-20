@@ -14,7 +14,7 @@ The system follows a decoupled, event-driven streaming pattern.
       v (Kafka Protocol)
 [Broker: Redpanda (Topic: mempool-raw)]
 
-## 2. Component breakdown
+## 2. Component Breakdown
 
 ### A. Ingestion Layer (The "Radar")
 - **Runtime:** Python 3.12 managed by `uv`.
@@ -43,3 +43,8 @@ To ensure scalability and maintain absolute imports, the project adheres to the 
 ## 4. Storage & Persistence (Upcoming)
 - **Target:** DuckDB (Local OLAP).
 - **Strategy:** A dedicated consumer module will subscribe to `mempool-raw`, perform schema validation (Pydantic), and persist flattened records into DuckDB.
+
+## 5. Developer Experience (DX) & Tooling
+- **Package Manager:** `uv` (Fast Python package installer & resolver).
+- **Command Runner:** `Just` (Command standardization and abstraction).
+- **Shell:** `zsh` + `Starship` (Context-aware prompt).

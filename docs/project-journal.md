@@ -26,32 +26,37 @@
 To audit the broker's health and ensure a stable backbone, we utilized the following baseline command:
 `docker exec -it infra-redpanda-1 rpk cluster health`
 
-**Parameter Breakdown:**
-- `docker exec`: Executes a command in a running container namespace.
-- `-i` (interactive): Keeps STDIN open for real-time interaction.
-- `-t` (tty): Allocates a pseudo-TTY for proper terminal output formatting.
-- `infra-redpanda-1`: Target container identifier defined in the `infra` stack.
-- `rpk`: Redpanda Keeper; the performance-oriented CLI for cluster management.
-- `cluster health`: Subcommand to verify node connectivity and leader election status.
-
 **Technical Challenges & Resolutions:**
 - **Module Resolution:** Addressed `ModuleNotFoundError` by transitioning from direct script execution to **Module Execution Mode** (`python -m src.ingestors.mempool_ws`). Added `__init__.py` markers to formalize the package namespace.
 - **Dependency Synchronization:** Resolved a `uv.lock` version drift by executing a full `uv sync` after manual `pyproject.toml` updates, ensuring a deterministic build environment.
 - **Connectivity Handling:** Identified `Connection refused` errors caused by inactive containers. Implemented a pre-runtime network probe routine (`nc -zv`) for broker availability.
 
+---
+
+### 2026-01-20 | Developer Experience (DX) & Workflow Standardization
+**Status:** COMPLETED
+
+**Objective:** Abstract complex execution logic into a unified command runner to ensure reproducibility, reduce cognitive load, and standardize the "Developer Loop".
+
+**Actions:**
+1.  **Task Runner Integration:**
+    * Adopted **Just** as the project's standard command runner.
+    * Created a `Justfile` at the project root to encapsulate infrastructure lifecycle (`infra-up`, `infra-down`) and application execution.
+2.  **Execution Abstraction:**
+    * Replaced verbose shell commands (e.g., `uv run python -m ...` or `docker compose ...`) with semantic recipes.
+    * Implemented a `check` recipe for instant system health verification, validating Python environment versions and Docker connectivity in a single pass.
+3.  **Documentation Alignment:**
+    * Refactored `README.md` and `architecture.md` to establish `just` commands as the canonical entry point for the project.
+
 **Project Snapshot (End of Day):**
 ```text
 .
-├── docs/
-│   ├── architecture.md
-│   ├── project-journal.md
-│   └── strategy.md
+├── Justfile            # Command definitions
+├── docs/               # Updated architecture & journal
 ├── infra/
 │   └── docker-compose.yml
 ├── src/
-│   ├── __init__.py
-│   ├── common/         # Infrastructure clients (Redpanda Producer)
-│   ├── ingestors/      # Data source connectors (Mempool WebSocket)
-│   └── utils/          # Stateless helpers
-├── pyproject.toml      # Project manifest (Python >= 3.12)
+│   ├── common/         # Infrastructure clients
+│   └── ingestors/      # Data source connectors
+├── pyproject.toml
 └── README.md

@@ -13,31 +13,25 @@ The system follows an event-driven architecture where mempool data is streamed i
 
 
 
-## Getting Started
+## 🚀 Quick Start
 
 ### Prerequisites
-- OrbStack or Docker Desktop
-- Homebrew
+- **Python 3.12+** (managed via `uv`)
+- **Docker** (via OrbStack recommended)
+- **Just** (Command Runner): `brew install just`
 
-### Infrastructure Setup
-```bash
-cd infra
-docker compose up -d
-```
-
-### Verification Command Breakdown
-
-The following command ensures the Redpanda broker is operational and reachable:
+### Commands
+We use `just` to standardize all project operations.
 
 ```bash
-docker exec -it infra-redpanda-1 rpk cluster health
+# 1. Start Infrastructure (Redpanda)
+just infra-up
 
-Why we run this:
+# 2. System Health Check
+just check
 
-Connectivity: Confirms the Docker network is correctly routing traffic to the broker.
+# 3. Run the Ingestion Pipeline (The "Radar")
+just radar
 
-Node Status: Verifies that the Redpanda process is healthy and the storage engine is initialized.
-
-Leader Election: Ensures the cluster (even as a single-node) has a designated leader to manage data streams.
-
-Expected Output: You should see a status report showing HEALTHY. If it returns an error, check the container logs using docker logs infra-redpanda-1.
+# 4. Stop Infrastructure
+just infra-down
