@@ -1,0 +1,76 @@
+# ==========================================
+# CONFIGURATION
+# ==========================================
+
+# Load .env file automatically if it exists
+set dotenv-load
+
+# Use zsh to ensure compatibility with macOS ecosystem
+set shell := ["zsh", "-c"]
+
+# UX: Define colors for output messages
+green := `tput setaf 2`
+red := `tput setaf 1`
+reset := `tput sgr0`
+
+# ==========================================
+# DEFAULT ACTION
+# ==========================================
+
+# List all available recipes
+default:
+    @just --list
+
+# ==========================================
+# INFRASTRUCTURE (Docker / Redpanda)
+# ==========================================
+
+# Start the infrastructure stack in detached mode
+infra-up:
+    @echo "{{green}}🚀 Starting Redpanda infrastructure...{{reset}}"
+    cd infra && docker compose up -d
+    @echo "{{green}}✅ Infrastructure is ready.{{reset}}"
+
+# Stop the infrastructure stack
+infra-down:
+    @echo "{{green}}🛑 Stopping services...{{reset}}"
+    cd infra && docker compose down
+    @echo "{{green}}💤 Infrastructure stopped.{{reset}}"
+
+# View running containers status
+# FIX: We use '{{{{' to escape Docker's Go-Template syntax so 'just' ignores it
+infra-status:
+    @echo "{{green}}🔍 Checking Docker containers...{{reset}}"
+    @docker ps --format "table {{{{.Names}}}}\t{{{{.Status}}}}\t{{{{.Ports}}}}"
+
+# Tail logs from Redpanda
+infra-logs:
+    cd infra && docker compose logs -f
+
+# ==========================================
+# DATA PIPELINE (Python / UV)
+# ==========================================
+
+# Run the Mempool WebSocket Ingestor (The "Radar")
+radar:
+    @echo "{{green}}📡 Launching Mempool Ingestor (Topic: mempool-raw)...{{reset}}"
+    @# We use 'uv run' to ensure the correct Python 3.12 virtual environment is used
+    uv run python -m src.ingestors.mempool_ws
+
+# ==========================================
+# MAINTENANCE & UTILS
+# ==========================================
+
+# Run a full system health check (Python env + Docker connectivity)
+check:
+    @echo "{{green}}🛠️  Performing System Health Check...{{reset}}"
+    @echo "\n[1/2] Python Environment (via UV):"
+    @uv run python --version
+    @echo "\n[2/2] Docker Connectivity:"
+    @# Simplificamos el formato para evitar conflictos de parsing
+    @docker ps --format "table {{{{.Names}}}}\t{{{{.Status}}}}" || echo "{{red}}❌ Docker daemon is not reachable{{reset}}"
+
+# Sync project dependencies from pyproject.toml
+sync:
+    @echo "{{green}}📦 Syncing dependencies...{{reset}}"
+    uv sync
