@@ -60,3 +60,24 @@ To audit the broker's health and ensure a stable backbone, we utilized the follo
 │   └── ingestors/      # Data source connectors
 ├── pyproject.toml
 └── README.md
+
+### 2026-01-21 | Configuration Hardening & Modern Refactoring
+**Status:** COMPLETED
+
+**Objective:** Eliminate configuration hardcoding, enhance type safety, and adopt modern Python 3.12 idioms for message processing.
+
+**Actions:**
+1.  **Configuration Management:**
+    * Implemented **Pydantic Settings** (`src/config.py`) to enforce strict type validation on environment variables.
+    * Centralized configuration in a `.env` file (git-ignored) to secure sensitive credentials (WS URLs, Broker addresses).
+    * Added whitespace sanitization validators to prevent "silent failures" from copy-paste errors.
+2.  **Code Modernization (Python 3.12):**
+    * Refactored `src/ingestors/mempool_ws.py` to replace imperative `if/else` chains with **Structural Pattern Matching** (`match/case`).
+    * Implemented a robust WebSocket handshake protocol (`action: init` + `action: want`) to ensure stable data streaming from Mempool.space API v1.
+3.  **Repository Standards:**
+    * Established a **Feature Branch Workflow** (GitHub Flow) with SSH authentication.
+    * Refined `.gitignore` to strictly exclude `.env` and `.duckdb` files.
+
+**Outcome:**
+The system is now environment-agnostic. It validates configuration at startup (fail-fast) and routes events using declarative logic.
+

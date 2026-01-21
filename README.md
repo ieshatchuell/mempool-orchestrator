@@ -18,7 +18,14 @@ The system follows an event-driven architecture where mempool data is streamed i
 ### Prerequisites
 - **Python 3.12+** (managed via `uv`)
 - **Docker** (via OrbStack recommended)
-- **Just** (Command Runner): `brew install just`
+- **Just** (Command Runner)
+
+### Configuration
+Create a `.env` file in the project root:
+```bash
+KAFKA_BOOTSTRAP_SERVERS=localhost:9092
+MEMPOOL_TOPIC=mempool-raw
+MEMPOOL_WS_URL=wss://mempool.space/api/v1/ws
 
 ### Commands
 We use `just` to standardize all project operations.
