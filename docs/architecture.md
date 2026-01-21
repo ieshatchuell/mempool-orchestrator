@@ -17,6 +17,8 @@ The system follows a decoupled, event-driven streaming pattern.
 ## 2. Component Breakdown
 
 ### A. Ingestion Layer (The "Radar")
+- **Configuration:** Managed via **Pydantic Settings**. Loads environment variables from `.env` with strict type validation and whitespace sanitization.
+- **Routing Logic:** Python 3.12 Structural Pattern Matching (`match/case`) for declarative event classification.
 - **Runtime:** Python 3.12 managed by `uv`.
 - **Concurrency:** `asyncio` loop for non-blocking I/O during WebSocket streaming.
 - **Protocol:** JSON-RPC over WebSockets. Subscription actions: `want-stats` and `track-mempool`.
