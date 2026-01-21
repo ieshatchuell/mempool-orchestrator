@@ -1,47 +1,57 @@
-import json
 from confluent_kafka import Producer
+from src.config import settings
 
 class MempoolProducer:
     """
-    Infrastructure client for Redpanda/Kafka interaction.
-    Handles message serialization and delivery reports.
+    High-level Kafka producer wrapper for mempool data orchestration.
     """
-    def __init__(self, bootstrap_servers: str = "localhost:9092"):
-        self.config = {
-            'bootstrap.servers': bootstrap_servers,
-            'client.id': 'mempool-orchestrator-ingestor',
-            'acks': 1  # Standard durability for ingestion
+
+    def __init__(self):
+        """
+        Initializes the Kafka producer using project settings.
+        """
+        conf = {
+            'bootstrap.servers': settings.kafka_bootstrap_servers,
+            'client.id': 'mempool-orchestrator-producer',
+            'acks': 1
         }
-        self.producer = Producer(self.config)
+        self.producer = Producer(conf)
 
-    def delivery_report(self, err, msg):
+    def produce(self, topic: str, key: str, value: bytes):
         """
-        Callback executed on message delivery or failure.
-        """
-        if err is not None:
-            print(f"Delivery failed for record {msg.key()}: {err}")
-        else:
-            print(f"Record {msg.key()} successfully produced to {msg.topic()} [{msg.partition()}] at offset {msg.offset()}")
+        Asynchronously produces a message to a specific Kafka topic.
 
-    def produce(self, topic: str, key: str, value: dict):
-        """
-        Asynchronously sends a dictionary payload to a Kafka topic.
+        Args:
+            topic (str): The destination Kafka topic.
+            key (str): Message key for partitioning logic.
+            value (bytes): Encoded message payload.
         """
         try:
-            payload = json.dumps(value).encode('utf-8')
             self.producer.produce(
-                topic, 
-                key=key, 
-                value=payload, 
-                on_delivery=self.delivery_report
+                topic=topic,
+                key=key,
+                value=value,
+                callback=self._delivery_report
             )
-            # Trigger delivery reports for queued messages
             self.producer.poll(0)
         except Exception as e:
-            print(f"Critical error in producer: {e}")
+            print(f"CRITICAL: Kafka production error: {e}")
+
+    def _delivery_report(self, err, msg):
+        """
+        Internal callback for message delivery reports.
+
+        Args:
+            err (KafkaError): Error object if delivery failed, else None.
+            msg (Message): The delivered message object.
+        """
+        if err is not None:
+            print(f"ERROR: Delivery failed: {err}")
+        else:
+            print(f"OK: {msg.key()} -> {msg.topic()} at offset {msg.offset()}")
 
     def flush(self):
         """
-        Ensures all messages in the buffer are delivered before shutdown.
+        Blocks until all messages in the producer queue are delivered.
         """
         self.producer.flush()

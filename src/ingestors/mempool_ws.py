@@ -1,48 +1,57 @@
 import asyncio
 import websockets
 import json
+from src.config import settings
 from src.common.kafka_producer import MempoolProducer
 
-async def mempool_streamer():
+def classify_message(data: dict) -> str:
     """
-    Connects to the Mempool.space WebSocket API and streams data to Redpanda.
-    """
-    uri = "wss://mempool.space/api/v1/ws"
-    topic = "mempool-raw"
+    Determines the Kafka key based on the message structure using Pattern Matching.
     
-    # Instance of our infrastructure client
+    Args:
+        data (dict): The decoded JSON payload from the WebSocket.
+        
+    Returns:
+        str: The routing key ('stats', 'block', 'init_data', or 'batch').
+    """
+    match data:
+        case {"mempoolInfo": _}:
+            return "stats"
+        case {"block": _}:
+            return "block"
+        case {"conversions": _}:
+            return "init_data"
+        case _:
+            # Default to batch for transaction lists or unknown structures
+            return "batch"
+
+async def mempool_ingestor():
+    """
+    Main ingestion loop to stream data from Mempool WebSocket to Kafka.
+    """
     producer = MempoolProducer()
     
-    print(f"Connecting to {uri}...")
-    
-    async with websockets.connect(uri) as ws:
-        # Protocol handshake: request global stats and mempool tracking
-        await ws.send(json.dumps({"action": "want-stats"}))
-        await ws.send(json.dumps({"track-mempool": True}))
+    async with websockets.connect(settings.mempool_ws_url, ping_interval=20) as websocket:
+        print(f"🟢 Connected to {settings.mempool_ws_url}")
         
-        print(f"Stream established. Producing events to topic: {topic}")
+        # --- ROBUST PROTOCOL (Standard v1 Handshake) ---
+        await websocket.send(json.dumps({"action": "init"}))
+        await websocket.send(json.dumps({"action": "want", "data": ["stats", "mempool-blocks"]}))
         
-        try:
-            async for message in ws:
-                data = json.loads(message)
-                
-                # Determine message type for Kafka partitioning/keying
-                msg_type = "stats" if "mempoolInfo" in data else "batch"
-                
-                # Forward data to the message broker
-                producer.produce(topic=topic, key=msg_type, value=data)
-                
-                if msg_type == "stats":
-                    m_info = data["mempoolInfo"]
-                    print(f"Checkpoint | Txs: {m_info['size']} | Fees: {m_info['min_fee']} sat/vB")
-                    
-        except websockets.exceptions.ConnectionClosed:
-            print("Server closed connection. Terminating ingestor.")
-        finally:
-            producer.flush()
+        print(f"🚀 Stream subscriptions sent. Producing to topic: {settings.mempool_topic}")
+
+        async for message in websocket:
+            data = json.loads(message)
+            key = classify_message(data)
+            
+            producer.produce(
+                topic=settings.mempool_topic,
+                key=key,
+                value=json.dumps(data).encode('utf-8')
+            )
 
 if __name__ == "__main__":
     try:
-        asyncio.run(mempool_streamer())
+        asyncio.run(mempool_ingestor())
     except KeyboardInterrupt:
-        print("\nIngestor stopped by user.")
+        print("\n🔴 Ingestor stopped by user.")
