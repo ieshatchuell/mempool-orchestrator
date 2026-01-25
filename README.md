@@ -46,13 +46,33 @@ just infra-down
 📊 Data Access & Architecture
 The system implements a Medallion Architecture to ensure data quality and analytical performance.
 
-1. Storage Engine
-Data is persisted in a local mempool_data.duckdb file. This file is ignored by Git to prevent bloating the repository with binary data.
-
-2. Medallion Layers
-Bronze (Raw): Verbatim JSON payloads from the WebSocket stored in the raw_mempool table.
+1. Medallion Layers
+Bronze (Raw): Verbatim JSON payloads from the WebSocket.
 
 Silver (Parsed): Structured metrics extracted via the v_mempool_stats view.
+
+2. Data Samples
+Bronze Layer (raw_mempool table):
+
+{
+  "timestamp": "2026-01-25 20:13:31",
+  "key": "stats",
+  "data": {
+    "mempoolInfo": {
+      "size": 38446,
+      "bytes": 19529746,
+      "total_fee": 0.03449075
+    }
+  }
+}
+
+Silver Layer (v_mempool_stats view): 
+|-----------------------|-----------|---------------|---------------|-------------------| 
+| timestamp             | tx_count  | total_bytes   | total_fee_btc | avg_tx_fee_sats   |
+|-----------------------|-----------|---------------|---------------|-------------------| 
+| 2026-01-25 20:13:31   | 38446     | 19529746      | 0.034491      | 89.71             |
+|-----------------------|-----------|---------------|---------------|-------------------| 
+
 
 3. Querying the Data
 You can audit the structured data directly from your terminal using Python/DuckDB in read-only mode:
@@ -60,5 +80,3 @@ You can audit the structured data directly from your terminal using Python/DuckD
 ```bash
 uv run python -c "import duckdb; conn = duckdb.connect('mempool_data.duckdb', read_only=True); print(conn.execute('SELECT * FROM v_mempool_stats ORDER BY timestamp DESC LIMIT 10').df())"
 ```
-
-The Silver Layer provides human-readable columns such as timestamp, tx_count, total_fee_btc, and avg_tx_fee_sats.
