@@ -1,7 +1,7 @@
 # System Architecture
 
-## 1. High-Level Data Flow (V2)
-The system follows a decoupled, event-driven streaming pattern.
+## 1. High-Level Data Flow (V3)
+The system follows a decoupled, event-driven streaming pattern with a Medallion Architecture for persistence.
 
 [External WebSocket: mempool.space] 
       |
@@ -13,40 +13,38 @@ The system follows a decoupled, event-driven streaming pattern.
       |
       v (Kafka Protocol)
 [Broker: Redpanda (Topic: mempool-raw)]
+      |
+      v (Manual Offset Commit)
+[Consumer: src.storage.duckdb_consumer]
+      |
+      v (Batch Write: 50 records)
+[Storage: DuckDB (mempool_data.duckdb)]
 
 ## 2. Component Breakdown
 
 ### A. Ingestion Layer (The "Radar")
-- **Configuration:** Managed via **Pydantic Settings**. Loads environment variables from `.env` with strict type validation and whitespace sanitization.
+- **Configuration:** Managed via **Pydantic Settings**. Loads environment variables from `.env` with strict type validation.
 - **Routing Logic:** Python 3.12 Structural Pattern Matching (`match/case`) for declarative event classification.
-- **Runtime:** Python 3.12 managed by `uv`.
-- **Concurrency:** `asyncio` loop for non-blocking I/O during WebSocket streaming.
-- **Protocol:** JSON-RPC over WebSockets. Subscription actions: `want-stats` and `track-mempool`.
-- **Execution Mode:** Module-based (`python -m`) to ensure absolute path resolution within the `src` namespace.
+- **Protocol:** JSON-RPC over WebSockets. Actions: `init` + `want` (stats, mempool-blocks).
 
-### B. Common Infrastructure Logic
-- **Kafka Producer Wrapper:** A high-level abstraction over `confluent-kafka`.
-- **Delivery Guarantees:** `acks=1` (leader acknowledgment) to balance throughput and data safety.
-- **Performance:** Implements non-blocking `poll(0)` to process delivery reports asynchronously without stalling the ingestion loop.
+### B. Storage Layer (The "Vault")
+- **Engine:** **DuckDB** (In-process OLAP).
+- **Strategy:** Buffered Consumer with batch writes (50 records) and **At-Least-Once** delivery semantics.
+- **Data Modeling (Medallion Pattern):**
+    - **Bronze (Raw):** `raw_mempool` table containing full JSON payloads.
+    - **Silver (Parsed):** `v_mempool_stats` view for structured metrics (TX count, bytes, usage, and corrected BTC fees).
 
-### C. Message Broker (Redpanda)
-- **Topic Strategy:** `mempool-raw`.
-- **Keying Strategy:** - `stats`: Global mempool metrics.
-    - `batch`: Real-time transaction clusters.
-- **Isolation:** Operates within a dedicated Docker network (`infra_default`).
+### C. Common Infrastructure
+- **Kafka Wrapper:** High-level abstraction over `confluent-kafka`.
+- **Performance:** Non-blocking `poll(0)` for producers and manual commit management for consumers to ensure data integrity.
 
 ## 3. Package Structure Standards
-To ensure scalability and maintain absolute imports, the project adheres to the following package structure:
-- `src.common`: Shared infrastructure clients (Kafka, DBs).
+- `src.common`: Shared infrastructure clients (Kafka).
 - `src.ingestors`: External data source connectors.
+- `src.storage`: Persistence logic and database consumers.
 - `src.utils`: Stateless helper functions.
-- `__init__.py`: Mandatory markers in all directories to formalize Python namespaces.
 
-## 4. Storage & Persistence (Upcoming)
-- **Target:** DuckDB (Local OLAP).
-- **Strategy:** A dedicated consumer module will subscribe to `mempool-raw`, perform schema validation (Pydantic), and persist flattened records into DuckDB.
-
-## 5. Developer Experience (DX) & Tooling
-- **Package Manager:** `uv` (Fast Python package installer & resolver).
-- **Command Runner:** `Just` (Command standardization and abstraction).
-- **Shell:** `zsh` + `Starship` (Context-aware prompt).
+## 4. Developer Experience (DX) & Tooling
+- **Package Manager:** `uv` (Fast resolver and environment manager).
+- **Command Runner:** `Just` (Recipes for infra, radar, and storage).
+- **Analysis:** `pandas` and `numpy` for terminal-based data auditing.

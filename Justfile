@@ -73,3 +73,8 @@ check:
 sync:
     @echo "{{green}}📦 Syncing dependencies...{{reset}}"
     uv sync
+
+# Run the DuckDB Storage Consumer
+storage:
+    @echo "📦 Starting DuckDB Storage Consumer..."
+    uv run python -m src.storage.duckdb_consumer
