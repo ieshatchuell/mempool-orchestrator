@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     mempool_topic: str = "mempool-raw"
     mempool_ws_url: str = "wss://mempool.space/api/v1/ws"
 
+    # Storage - DuckDB
+    duckdb_path: str = "mempool_data.duckdb"
+    duckdb_batch_size: int = 50 # Messages before commit
+
     model_config = SettingsConfigDict(
         env_file=".env", 
         env_file_encoding="utf-8",
