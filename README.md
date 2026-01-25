@@ -27,7 +27,7 @@ DUCKDB_BATCH_SIZE=50
 ```
 
 ### Commands
-
+```bash
 # 1. Start Infrastructure (Redpanda)
 just infra-up
 
@@ -42,18 +42,20 @@ just storage
 
 # 5. Stop Infrastructure
 just infra-down
+```
 
-📊 Data Access & Architecture
-The system implements a Medallion Architecture to ensure data quality and analytical performance.
+## 📊 Data Access & Architecture
 
-1. Medallion Layers
-Bronze (Raw): Verbatim JSON payloads from the WebSocket.
+The system implements a **Medallion Architecture** to ensure data quality and analytical performance.
 
-Silver (Parsed): Structured metrics extracted via the v_mempool_stats view.
+### 1. Medallion Layers
+- **Bronze (Raw):** Verbatim JSON payloads from the WebSocket stored in `raw_mempool`.
+- **Silver (Parsed):** Structured metrics extracted via the `v_mempool_stats` view.
 
-2. Data Samples
-Bronze Layer (raw_mempool table):
+### 2. Data Samples
 
+**Bronze Layer (`raw_mempool` table)**
+```json
 {
   "timestamp": "2026-01-25 20:13:31",
   "key": "stats",
@@ -65,16 +67,15 @@ Bronze Layer (raw_mempool table):
     }
   }
 }
+```
 
-Silver Layer (v_mempool_stats view): 
-|-----------------------|-----------|---------------|---------------|-------------------| 
-| timestamp             | tx_count  | total_bytes   | total_fee_btc | avg_tx_fee_sats   |
-|-----------------------|-----------|---------------|---------------|-------------------| 
-| 2026-01-25 20:13:31   | 38446     | 19529746      | 0.034491      | 89.71             |
-|-----------------------|-----------|---------------|---------------|-------------------| 
+**Silver Layer (`v_mempool_stats` view)**
 
+| timestamp | tx_count | total_bytes | total_fee_btc | avg_tx_fee_sats |
+| :--- | :--- | :--- | :--- | :--- |
+| 2026-01-25 20:13:31 | 38,446 | 19,529,746 | 0.034491 | 89.71 |
 
-3. Querying the Data
+### 3. Querying the Data
 You can audit the structured data directly from your terminal using Python/DuckDB in read-only mode:
 
 ```bash
