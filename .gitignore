@@ -14,6 +14,3 @@ wheels/
 
 # Database files
 *.duckdb
-
-# Documentation - Local Only
-docs/project-journal.md
