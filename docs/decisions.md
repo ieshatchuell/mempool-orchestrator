@@ -60,6 +60,7 @@ To audit the broker's health and ensure a stable backbone, we utilized the follo
 │   └── ingestors/      # Data source connectors
 ├── pyproject.toml
 └── README.md
+```
 
 ### 2026-01-21 | Configuration Hardening & Modern Refactoring
 **Status:** COMPLETED
