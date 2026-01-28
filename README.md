@@ -1,4 +1,4 @@
-# Mempool Orchestrator
+Mempool Orchestrator
 
 An agentic data platform designed to ingest, process, and optimize Bitcoin mempool dynamics for automated treasury management.
 
@@ -8,6 +8,17 @@ An agentic data platform designed to ingest, process, and optimize Bitcoin mempo
 - **Database:** DuckDB (OLAP Storage)
 - **Data Science:** Pandas / NumPy (Auditing & Analysis)
 - **Infrastructure:** Docker / OrbStack
+- **IDE:** Antigravity (Gemini 3)
+
+## 🤖 AI-Driven Development
+
+This project operates under strict **Staff Data Engineer** constraints enforced by the AI Agent.
+
+### Agent Configuration
+The `.agent/` directory acts as "Infrastructure as Code" for the development workflow:
+- **Persona:** Enforces architectural rigor, async-first coding, and FinOps awareness.
+- **Domain Knowledge:** Pre-loaded with Bitcoin transaction structures and Redpanda limits (e.g., 1MB message cap).
+- **Documentation:** For setup and rules, see [AI Workflow Guide](docs/setup/AI_WORKFLOW.md).
 
 ## 🚀 Quick Start
 
