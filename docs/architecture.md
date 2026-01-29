@@ -22,29 +22,53 @@ The system follows a decoupled, event-driven streaming pattern with a Medallion 
 
 ## 2. Component Breakdown
 
-### A. Ingestion Layer (The "Radar")
-- **Configuration:** Managed via **Pydantic Settings**. Loads environment variables from `.env` with strict type validation.
-- **Routing Logic:** Python 3.12 Structural Pattern Matching (`match/case`) for declarative event classification.
-- **Protocol:** JSON-RPC over WebSockets. Actions: `init` + `want` (stats, mempool-blocks).
+### A. Ingestion Layer (The "Radar") - Real-Time Event Filtering
+The Radar pattern provides a lightweight, metadata-first approach to ingesting Bitcoin mempool data.
+
+#### Data Contracts & Validation
+- **Schema Definition:** `src/schemas.py`
+  - Pydantic v2 models with `strict=True` for compile-time type safety.
+  - **Monetary Precision:** All values (`fees`, `totalFees`) are strictly `int` (Satoshis) - NEVER float.
+  - **Alias Mapping:** Automatic camelCase ↔ snake_case conversion via `alias_generator=to_camel`.
+  - **Models:**
+    - `MempoolStats`: Real-time mempool state (size, bytes, fees).
+    - `MempoolBlock`: Projected block statistics (blockSize, medianFee, feeRange).
+    - `Transaction`: Full transaction schema for future REST API integration.
+
+#### Radar Ingestion Pattern
+**Source:** Mempool.space WebSocket API (`wss://mempool.space/api/v1/ws`)
+
+**Event Routing Logic** (`src/ingestors/mempool_ws.py`):
+1. **Silent Filter:** `conversions` messages are dropped (noise).
+2. **Stats Events:** Key `mempoolInfo` → Validated as `MempoolStats` → Kafka key: `stats`.
+3. **Block Events:** Key `mempool-blocks` → Validated as `List[MempoolBlock]` → Kafka key: `mempool_block`.
+4. **Validation:** Fail-fast strategy. Invalid payloads are logged and dropped to protect downstream storage.
 
 ### B. Storage Layer (The "Vault")
 - **Engine:** **DuckDB** (In-process OLAP).
-- **Strategy:** Buffered Consumer with batch writes (50 records) and **At-Least-Once** delivery semantics.
-- **Data Modeling (Medallion Pattern):**
-    - **Bronze (Raw):** `raw_mempool` table containing full JSON payloads.
-    - **Silver (Parsed):** `v_mempool_stats` view for structured metrics (TX count, bytes, usage, and corrected BTC fees).
+- **Strategy:** Buffered Consumer with batch writes (50 records).
+- **Current State:** Consumes raw JSON (Refactor pending to use new Schemas).
 
-### C. Common Infrastructure
-- **Kafka Wrapper:** High-level abstraction over `confluent-kafka`.
-- **Performance:** Non-blocking `poll(0)` for producers and manual commit management for consumers to ensure data integrity.
+### C. Common Infrastructure & Configuration
+- **Kafka Wrapper:** `MempoolProducer` with non-blocking `poll(0)` and delivery callbacks.
+- **Configuration:** `src/config.py` using Pydantic Settings. Enforces strict types and strips whitespace from environment variables.
 
 ## 3. Package Structure Standards
-- `src.common`: Shared infrastructure clients (Kafka).
+- `src.common`: Shared infrastructure clients.
 - `src.ingestors`: External data source connectors.
-- `src.storage`: Persistence logic and database consumers.
-- `src.utils`: Stateless helper functions.
+- `src.schemas`: Data contracts and Pydantic models.
+- `src.storage`: Persistence logic.
+- `src.utils`: Stateless helpers.
 
-## 4. Developer Experience (DX) & Tooling
-- **Package Manager:** `uv` (Fast resolver and environment manager).
-- **Command Runner:** `Just` (Recipes for infra, radar, and storage).
-- **Analysis:** `pandas` and `numpy` for terminal-based data auditing.
+## 4. Developer Experience (DX) & Quality Assurance
+- **Manager:** `uv`.
+- **Runner:** `Just`.
+- **Testing Stack:**
+  - **Framework:** `pytest` (Root configuration in `pyproject.toml`).
+  - **Mocks:** `pytest-mock` and `unittest.mock` for isolating Kafka and WebSocket logic.
+  - **Async:** `pytest-asyncio` for coroutine testing.
+  - **Coverage:**
+    - `tests/test_schemas.py`: Contract validation (Happy/Sad paths).
+    - `tests/test_ingestor.py`: Routing logic and error handling.
+    - `tests/test_kafka_producer.py`: Infrastructure wrapper behavior.
+    - `tests/test_config.py`: Environment variable loading and validation.

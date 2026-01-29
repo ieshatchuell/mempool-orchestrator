@@ -122,3 +122,69 @@ Attempts to implement the "Silver Layer" (raw transactions ingestion) on branch 
 * **Historical Data:** ~2.3 Billion transactions total.
 * **Storage Strategy:** DuckDB native columnar storage (estimated ~350GB compressed).
 * **Backfill:** We will implement a "Lookback Strategy" (fetch last N blocks on boot) instead of a full historical sync for the MVP.
+
+---
+
+## ADR-002: Strict Data Contracts & Infrastructure Testing
+**Date:** 2026-01-29  
+**Status:** ✅ IMPLEMENTED  
+**Context:** Phase 2 - Data Quality & Reliability
+
+### Problem Statement
+As the system grew, relying on raw JSON and untested infrastructure components introduced risks:
+
+1. **Type Safety:** No guarantee that fees were integers or required fields existed.
+2. **Logic Fragility:** Routing logic and noise filtering in the ingestor were untested.
+3. **Infra Blind Spots:** The Kafka Producer wrapper and Configuration loading had no unit tests, making refactors dangerous.
+
+### Decision
+1. **Adopt Pydantic v2 Strict Mode:** Enforce data contracts at the ingestion boundary.
+2. **Implement "Radar" Ingestion:** Explicitly route and validate specific WebSocket events (`stats`, `blocks`), filtering out noise (`conversions`).
+3. **Enforce Comprehensive Unit Testing:** Mandate tests for both logic (Schemas, Ingestor) and infrastructure (Producer, Config) using Mocks.
+
+### Implementation
+#### Data Contracts (`src/schemas.py`)
+- Pydantic v2 models with `strict=True`
+- Automatic camelCase ↔ snake_case mapping
+- Monetary values enforced as `int` (Satoshis)
+- Models: `MempoolStats`, `MempoolBlock`, `Transaction`
+
+#### Radar Ingestion (`src/ingestors/mempool_ws.py`)
+- Silent filter for `conversions` noise
+- Event routing: `mempoolInfo` → stats, `mempool-blocks` → mempool_block
+- Fail-fast validation with Pydantic
+
+#### Testing Coverage (42 Unit Tests)
+```bash
+tests/test_schemas.py         # 9 tests  - Contract validation
+tests/test_ingestor.py        # 9 tests  - Routing logic
+tests/test_kafka_producer.py  # 12 tests - Infrastructure wrapper
+tests/test_config.py          # 12 tests - Environment validation
+```
+
+**Test Strategy:**
+- Mocked infrastructure (no Docker required)
+- Isolated unit tests for each component
+- Happy path + error handling coverage
+
+### Consequences
+
+**Positive:**
+1. **Confidence:** 42+ unit tests ensure core components work in isolation without needing Docker.
+2. **Data Integrity:** Invalid data is rejected before hitting Kafka.
+3. **Maintainability:** Snake_case conversion is handled automatically by the Schema layer.
+
+**Trade-offs:**
+1. **Dev Time:** Writing tests and mocks requires upfront investment (paid off by stability).
+2. **Strictness:** API changes (e.g., new fields) require explicit schema updates.
+
+**Test Results:**
+```
+======================== 42 passed in 0.12s =========================
+```
+
+### Next Steps
+1. ✅ Schema validation for stats and mempool-blocks
+2. ✅ Infrastructure testing (Config, Producer)
+3. ⏳ Refactor DuckDB consumer to use Pydantic schemas
+4. ⏳ REST API integration for full transaction fetch
