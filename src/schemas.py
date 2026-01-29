@@ -1,0 +1,164 @@
+"""Data contracts for Bitcoin transaction ingestion from Mempool.space API.
+
+All models use Pydantic v2 with automatic camelCase ↔ snake_case mapping.
+Monetary values are strictly int (Satoshis).
+"""
+
+from typing import List, Optional
+
+from pydantic import BaseModel, Field, field_validator, ConfigDict
+
+
+def to_camel(string: str) -> str:
+    """Convert snake_case to camelCase for API serialization."""
+    components = string.split("_")
+    return components[0] + "".join(x.title() for x in components[1:])
+
+
+class Prevout(BaseModel):
+    """Previous output reference in a transaction input."""
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        strict=True,
+    )
+
+    scriptpubkey_address: Optional[str] = None
+    value: int = Field(..., description="Value in Satoshis")
+
+
+class Vin(BaseModel):
+    """Transaction input (Vin) model."""
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        strict=True,
+    )
+
+    txid: str = Field(..., description="Transaction ID (hex string)")
+    vout: int = Field(..., description="Output index")
+    prevout: Optional[Prevout] = None
+    scriptsig: Optional[str] = None
+    witness: Optional[List[str]] = None
+    is_coinbase: bool
+    sequence: int
+
+    @field_validator("txid")
+    @classmethod
+    def validate_txid_hex(cls, v: str) -> str:
+        """Ensure txid is a valid hex string."""
+        if not all(c in "0123456789abcdefABCDEF" for c in v):
+            raise ValueError(f"txid must be a hex string, got: {v}")
+        return v.lower()
+
+
+class Vout(BaseModel):
+    """Transaction output (Vout) model."""
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        strict=True,
+    )
+
+    scriptpubkey_address: Optional[str] = None
+    value: int = Field(..., description="Value in Satoshis")
+
+
+class Status(BaseModel):
+    """Transaction confirmation status."""
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        strict=True,
+    )
+
+    confirmed: bool
+    block_height: Optional[int] = None
+    block_hash: Optional[str] = None
+    block_time: Optional[int] = None
+
+
+class Transaction(BaseModel):
+    """Bitcoin transaction from Mempool.space API.
+    
+    Source: GET /api/block/:hash/txs
+    """
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        strict=True,
+    )
+
+    txid: str = Field(..., description="Transaction ID (hex string)")
+    version: int
+    locktime: int
+    vin: List[Vin] = Field(..., min_length=1, description="Transaction inputs")
+    vout: List[Vout] = Field(..., min_length=1, description="Transaction outputs")
+    size: int
+    weight: int
+    fee: int = Field(..., description="Transaction fee in Satoshis")
+    status: Status
+
+    @field_validator("txid")
+    @classmethod
+    def validate_txid_hex(cls, v: str) -> str:
+        """Ensure txid is a valid hex string."""
+        if not all(c in "0123456789abcdefABCDEF" for c in v):
+            raise ValueError(f"txid must be a hex string, got: {v}")
+        return v.lower()
+
+
+# ============================================================================
+# Mempool WebSocket Event Models
+# ============================================================================
+
+
+class MempoolBlock(BaseModel):
+    """Mempool block statistics from WebSocket events."""
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        strict=True,
+    )
+
+    block_size: int = Field(..., description="Block size in bytes")
+    block_v_size: int = Field(..., description="Block virtual size")
+    n_tx: int = Field(..., description="Number of transactions")
+    total_fees: int = Field(..., description="Total fees in Satoshis")
+    median_fee: float = Field(..., description="Median fee rate")
+    fee_range: List[float] = Field(..., description="Fee rate range")
+
+
+class MempoolInfo(BaseModel):
+    """Mempool information from WebSocket stats event."""
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        strict=True,
+    )
+
+    size: int = Field(..., description="Number of transactions in mempool")
+    bytes: int = Field(..., description="Total size in bytes")
+    usage: Optional[int] = Field(None, description="Memory usage")
+    total_fee: float = Field(..., description="Total fees")
+    mempool_min_fee: Optional[float] = Field(None, description="Minimum fee rate")
+    min_relay_tx_fee: Optional[float] = Field(None, description="Minimum relay fee rate")
+
+
+class MempoolStats(BaseModel):
+    """Wrapper for mempool statistics WebSocket event."""
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        strict=True,
+    )
+
+    mempool_info: MempoolInfo = Field(..., description="Mempool information")
