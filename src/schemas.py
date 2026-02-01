@@ -128,7 +128,7 @@ class MempoolBlock(BaseModel):
     )
 
     block_size: int = Field(..., description="Block size in bytes")
-    block_v_size: int = Field(..., description="Block virtual size")
+    block_v_size: float = Field(..., description="Block virtual size")
     n_tx: int = Field(..., description="Number of transactions")
     total_fees: int = Field(..., description="Total fees in Satoshis")
     median_fee: float = Field(..., description="Median fee rate")

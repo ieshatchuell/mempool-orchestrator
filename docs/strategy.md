@@ -18,10 +18,15 @@ The project addresses the auction market for Bitcoin block space.
 
 ## 4. Phased Roadmap (2026)
 
-### Q1: The Backbone (Infrastructure & Ingestion) - [IN PROGRESS]
+### Q1: The Backbone (Infrastructure & Ingestion) - [COMPLETED]
 - **Technical Goal:** Deploy a resilient pipeline (Redpanda + Python/uv + DuckDB).
 - **Business Goal:** Achieve "Full Observability" via structured Medallion layers (Bronze/Silver).
-- **Status:** Ingestion and Raw Storage completed. Parsing logic (Silver) active for stats.
+- **Status:** 
+  - ✅ Ingestion pipeline (WebSocket + REST API)
+  - ✅ Typed storage layer with Pydantic validation
+  - ✅ Data quality hardening (schema relaxation for API compatibility)
+  - ✅ Analytics dashboard for real-time observability
+  - ✅ Storage schema evolution (`block_index` ordering, `fee_range` arrays)
 
 ### Q2: The Memory (Modeling & Intelligence)
 - **Technical Goal:** Advanced transaction parsing and historical trend analysis.
