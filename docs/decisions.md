@@ -207,3 +207,60 @@ tests/test_config.py          # 12 tests - Environment validation
 3. **Semantic Fix:** Corrected the mapping of `min_fee` (previously misidentified as median) and enforced `UBIGINT` for all monetary values.
 
 **Outcome:** The pipeline now ingests, validates, and stores typed data End-to-End. Data is query-ready immediately upon insertion.
+---
+
+## Phase 2: Infrastructure Maturity & Observability (Q1 2026)
+
+### 2026-02-01 | REST API Client & Analytics Dashboard
+**Status:** COMPLETED
+
+**Objective:** Implement a hybrid ingestion strategy (Signal + Fetch) and add real-time observability through an analytics dashboard.
+
+**Actions:**
+
+1. **REST API Client Implementation:**
+   - Created `src/ingestors/mempool_api.py` with async `httpx.AsyncClient`.
+   - Implemented `get_block_stats(block_hash: str)` for on-demand block data fetching.
+   - Added custom `MempoolAPIError` exception for comprehensive error handling (HTTP 4xx/5xx, network errors, JSON parsing).
+   - Configuration: Base URL managed via `settings.mempool_api_url` (strict, no hardcoding).
+   - Testing: 13 new tests using `respx` mocking (success, failure, network errors, integration scenarios).
+
+2. **Analytics Dashboard:**
+   - Created `dashboard.py` using Streamlit framework.
+   - Read-only DuckDB connection for real-time data visualization.
+   - Added `just dashboard` command to Justfile for one-command launch.
+   - Features: Mempool statistics, projected blocks, historical trends, data quality monitoring.
+
+3. **Architecture Evolution:**
+   - Migrated to **Hybrid Signal & Fetch** pattern:
+     - **Signal (WebSocket):** Low-latency mempool state changes (Radar).
+     - **Fetch (REST API):** On-demand confirmed block data (Fetcher).
+   - Rationale: Avoids Kafka message size limits (1MB) and ensures data completeness.
+
+4. **Configuration Management:**
+   - Added `mempool_api_url` field to `src/config.py` with default `https://mempool.space/api`.
+   - All configuration fields validated with Pydantic and whitespace-stripped.
+
+5. **Documentation Overhaul:**
+   - Updated `README.md`: Removed broken links, documented typed schemas, added hybrid architecture notes.
+   - Updated `docs/architecture.md`: Added sections for Fetcher (C) and Dashboard (D), upgraded data flow to V4.
+   - Updated `docs/decisions.md`: Added this Phase 2 milestone entry.
+
+**Test Results:**
+```
+======================== 55 passed in 0.12s =========================
+Previous: 42 tests
+New: 13 tests (REST API client)
+```
+
+**Outcome:** The system now supports both real-time streaming (WebSocket) and on-demand fetching (REST API) with unified observability through the dashboard. Infrastructure is production-ready for block backfill and auditing workflows.
+
+### Next Steps
+1. ✅ Schema validation for stats and mempool-blocks
+2. ✅ Infrastructure testing (Config, Producer)
+3. ✅ Refactor DuckDB consumer to use Pydantic schemas
+4. ✅ REST API integration for block data fetching
+5. ✅ Analytics dashboard for real-time observability
+6. ⏳ Implement `get_block_transactions()` for full transaction ingestion
+7. ⏳ Add retry logic with exponential backoff to REST client
+8. ⏳ Block backfill strategy for historical data

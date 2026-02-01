@@ -9,10 +9,12 @@ class Settings(BaseSettings):
         kafka_bootstrap_servers (str): Connection string for the Kafka broker.
         mempool_topic (str): Target Kafka topic for mempool events.
         mempool_ws_url (str): Source WebSocket URL for real-time mempool data.
+        mempool_api_url (str): Base URL for Mempool.space REST API.
     """
     kafka_bootstrap_servers: str = "localhost:9092"
     mempool_topic: str = "mempool-raw"
     mempool_ws_url: str = "wss://mempool.space/api/v1/ws"
+    mempool_api_url: str = "https://mempool.space/api"
 
     # Storage - DuckDB
     duckdb_path: str = "mempool_data.duckdb"
