@@ -78,3 +78,8 @@ sync:
 storage:
     @echo "📦 Starting DuckDB Storage Consumer..."
     uv run python -m src.storage.duckdb_consumer
+
+# Launch the analytics dashboard
+dashboard:
+    @echo "🚀 Launching Mempool Dashboard..."
+    @uv run --with streamlit streamlit run dashboard.py
