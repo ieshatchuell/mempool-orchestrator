@@ -186,5 +186,24 @@ tests/test_config.py          # 12 tests - Environment validation
 ### Next Steps
 1. ✅ Schema validation for stats and mempool-blocks
 2. ✅ Infrastructure testing (Config, Producer)
-3. ⏳ Refactor DuckDB consumer to use Pydantic schemas
+3. ✅ Refactor DuckDB consumer to use Pydantic schemas
 4. ⏳ REST API integration for full transaction fetch
+
+---
+
+### 2026-02-01 | Storage Layer Refactor (The Vault)
+**Status:** COMPLETED
+
+**Objective:** Transition from raw JSON storage to a strongly-typed, analytical schema in DuckDB to enable immediate SQL analysis.
+
+**Actions:**
+
+1. **Refactor:** Updated `src/storage/duckdb_consumer.py` to utilize `src/schemas.py` for data parsing.
+
+2. **Schema Evolution:** Replaced `raw_mempool` with two structured tables:
+   - `mempool_stats`: Stores network pulse (fees in Satoshis).
+   - `projected_blocks`: Stores candidate block templates.
+
+3. **Semantic Fix:** Corrected the mapping of `min_fee` (previously misidentified as median) and enforced `UBIGINT` for all monetary values.
+
+**Outcome:** The pipeline now ingests, validates, and stores typed data End-to-End. Data is query-ready immediately upon insertion.

@@ -46,8 +46,11 @@ The Radar pattern provides a lightweight, metadata-first approach to ingesting B
 
 ### B. Storage Layer (The "Vault")
 - **Engine:** **DuckDB** (In-process OLAP).
-- **Strategy:** Buffered Consumer with batch writes (50 records).
-- **Current State:** Consumes raw JSON (Refactor pending to use new Schemas).
+- **Strategy:** Buffered Consumer (batch size: 50) with Pydantic validation.
+- **Schema Strategy (Silver Layer):** Direct write to structured tables (no raw JSON dump).
+    - `mempool_stats`: High-frequency metrics (ingestion_time, size, bytes, total_fee, min_fee).
+    - `projected_blocks`: Template data (block_size, n_tx, total_fees, median_fee).
+- **Data Types:** Strict mapping. Fees are stored as `UBIGINT` (Satoshis) to prevent floating-point errors.
 
 ### C. Common Infrastructure & Configuration
 - **Kafka Wrapper:** `MempoolProducer` with non-blocking `poll(0)` and delivery callbacks.
