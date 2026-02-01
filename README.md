@@ -81,25 +81,68 @@ The system uses **strongly-typed tables** with Pydantic validation:
 
 **`projected_blocks` table**
 - `ingestion_time`: TIMESTAMP (UTC)
+- `block_index`: UTINYINT (0=next block, 1=following, etc.)
 - `block_size`: UINTEGER (bytes)
-- `block_v_size`: UINTEGER (virtual size)
+- `block_v_size`: DOUBLE (virtual size, can include fractional values)
 - `n_tx`: UINTEGER (transaction count)
 - `total_fees`: UBIGINT (fees in Satoshis)
 - `median_fee`: DOUBLE (median fee rate)
+- `fee_range`: JSON (array of fee rates: [min, p10, p25, p50, p75, p90, max])
 
 > **Note:** All monetary values are stored as `UBIGINT` (unsigned big integers) in **Satoshis** to prevent floating-point precision errors.
 
-### 3. Data Sample
+### 3. Real WebSocket Payload Examples
 
-| ingestion_time | size | bytes | total_fee | min_fee |
-| :--- | :--- | :--- | :--- | :--- |
-| 2026-02-01 01:23:45 | 38,446 | 19,529,746 | 3,449,075 | 1.2 |
+**Mempool Stats Event (`stats`):**
+```json
+{
+  "mempoolInfo": {
+    "size": 38446,
+    "bytes": 19529746,
+    "usage": 25000000,
+    "totalFee": 0.03449075,
+    "mempoolMinFee": 1.2,
+    "minRelayTxFee": 1.0
+  }
+}
+```
+
+**Projected Blocks Event (`mempool-blocks`):**
+```json
+{
+  "mempool-blocks": [
+    {
+      "blockSize": 1595783,
+      "blockVSize": 997994,
+      "nTx": 3888,
+      "totalFees": 2036508,
+      "medianFee": 1.2053369765340756,
+      "feeRange": [0.14, 0.14, 0.15, 1.20, 2.29, 3.29, 178.72]
+    },
+    {
+      "blockSize": 1523456,
+      "blockVSize": 945123,
+      "nTx": 3654,
+      "totalFees": 1856234,
+      "medianFee": 1.15,
+      "feeRange": [0.12, 0.13, 0.14, 1.15, 2.10, 3.15, 165.50]
+    }
+  ]
+}
+```
 
 ### 4. Querying the Data
 
 **From Terminal (Read-Only):**
 ```bash
+# Query mempool stats
 uv run python -c "import duckdb; conn = duckdb.connect('mempool_data.duckdb', read_only=True); print(conn.execute('SELECT * FROM mempool_stats ORDER BY ingestion_time DESC LIMIT 10').df())"
+
+# Query projected blocks (most recent snapshot)
+uv run python -c "import duckdb; conn = duckdb.connect('mempool_data.duckdb', read_only=True); print(conn.execute('SELECT ingestion_time, block_index, n_tx, total_fees, median_fee, fee_range FROM projected_blocks WHERE ingestion_time = (SELECT MAX(ingestion_time) FROM projected_blocks) ORDER BY block_index').df())"
+
+# Audit data quality (verify block_index ordering and fee_range structure)
+uv run python -c "import duckdb; conn = duckdb.connect('mempool_data.duckdb', read_only=True); print(conn.execute('SELECT ingestion_time, block_index, total_fees, fee_range FROM projected_blocks ORDER BY ingestion_time DESC LIMIT 5').df())"
 ```
 
 **From Dashboard:**

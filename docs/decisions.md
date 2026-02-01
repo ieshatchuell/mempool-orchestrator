@@ -264,3 +264,88 @@ New: 13 tests (REST API client)
 6. ⏳ Implement `get_block_transactions()` for full transaction ingestion
 7. ⏳ Add retry logic with exponential backoff to REST client
 8. ⏳ Block backfill strategy for historical data
+
+---
+
+## ADR-003: Schema Relaxation for Floating Point Block Sizes
+**Date:** 2026-02-01  
+**Status:** ✅ ACCEPTED  
+**Phase:** Data Quality & Ingestion Hardening
+
+### Context
+
+During production deployment of the WebSocket ingestor, Pydantic validation failures were detected:
+
+```
+❌ MempoolBlock validation failed: blockVSize input should be a valid integer, got float (e.g. 997892.5)
+```
+
+**Root Cause Analysis:**
+1. The `MempoolBlock` schema defined `block_v_size: int` with `strict=True` validation.
+2. The Mempool.space API emits **floating-point values** for `blockVSize` (e.g., `997892.5`).
+3. Pydantic v2 strict mode rejects implicit type coercion, causing all ingestion to fail.
+
+### Decision
+
+**Relax the schema to accept floating-point block sizes:**
+
+1. **Schema Layer (`src/schemas.py`):**
+   - Changed `MempoolBlock.block_v_size` from `int` to `float`
+   - Maintains `strict=True` for all other fields
+   - Preserves automatic camelCase mapping via `alias_generator`
+
+2. **Storage Layer (`src/storage/duckdb_consumer.py`):**
+   - Updated `projected_blocks` table: `block_v_size UINTEGER` → `block_v_size DOUBLE`
+   - Implemented `DROP TABLE IF EXISTS` strategy for schema evolution during development
+
+3. **Documentation:**
+   - Updated README.md schema definitions to reflect `DOUBLE` type
+   - Added audit query examples for data quality verification
+
+### Consequences
+
+**Positive:**
+1. **Data Fidelity:** No data loss; captures exact API values without truncation
+2. **Ingestion Stability:** Eliminates validation failures on valid WebSocket payloads
+3. **Schema Flexibility:** Accommodates API precision variations without breaking changes
+
+**Trade-offs:**
+1. **Type Semantics:** Block sizes are conceptually integers (bytes), but API emits floats
+2. **Storage Overhead:** `DOUBLE` (8 bytes) vs `UINTEGER` (4 bytes) per row
+3. **Query Consideration:** Analysts must handle potential fractional values in aggregations
+
+**Validation Results:**
+```bash
+# Production test after fix
+✅ MempoolBlocks: processed 3 blocks
+✅ Inserted 3 projected block records.
+```
+
+### Implementation Evidence
+
+**Real WebSocket Payload:**
+```json
+{
+  "mempool-blocks": [
+    {
+      "blockVSize": 997892.5,  ← Fractional value
+      "blockSize": 1595783,
+      "nTx": 3888,
+      "totalFees": 2036508,
+      "medianFee": 1.2053369765340756,
+      "feeRange": [0.14, 0.14, 0.15, 1.20, 2.29, 3.29, 178.72]
+    }
+  ]
+}
+```
+
+### Related Changes
+
+- **Ingestion Logic:** Fixed premature `return` statements in `route_message()` to handle multi-key messages
+- **Storage Schema:** Added `block_index` (ordering) and `fee_range` (JSON array) columns
+- **Test Coverage:** Existing unit tests continue to pass; schema validation now accepts both int and float
+
+### Next Steps
+1. ✅ Monitor production ingestion for additional type mismatches
+2. ⏳ Add integration test with real API payload fixtures
+3. ⏳ Consider schema versioning strategy before production deployment

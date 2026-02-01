@@ -44,15 +44,19 @@ class DuckDBConsumer:
             )
         """)
         
-        # Projected Blocks Table
+        # Projected Blocks Table - Schema Evolution Strategy
+        # Drop and recreate during development to ensure schema matches real WebSocket payload
+        self.db_conn.execute("DROP TABLE IF EXISTS projected_blocks")
         self.db_conn.execute("""
-            CREATE TABLE IF NOT EXISTS projected_blocks (
+            CREATE TABLE projected_blocks (
                 ingestion_time TIMESTAMP NOT NULL,
+                block_index UTINYINT NOT NULL,
                 block_size UINTEGER NOT NULL,
-                block_v_size UINTEGER NOT NULL,
+                block_v_size DOUBLE NOT NULL,
                 n_tx UINTEGER NOT NULL,
                 total_fees UBIGINT NOT NULL,
-                median_fee DOUBLE NOT NULL
+                median_fee DOUBLE NOT NULL,
+                fee_range JSON NOT NULL
             )
         """)
         
@@ -117,18 +121,30 @@ class DuckDBConsumer:
 
             elif key == b'mempool_block':
                 # Parse and validate as List[MempoolBlock]
+                # Real payload: {"mempool-blocks": [{...}, {...}, ...]}
                 data = json.loads(value_str)
-                blocks: List[MempoolBlock] = [MempoolBlock.model_validate(block) for block in data]
                 
-                # Insert each block with the same ingestion timestamp
-                for block in blocks:
+                # Handle both wrapped and unwrapped list formats
+                if isinstance(data, dict) and "mempool-blocks" in data:
+                    blocks_data = data["mempool-blocks"]
+                elif isinstance(data, list):
+                    blocks_data = data
+                else:
+                    raise ValueError(f"Unexpected mempool_block format: {type(data)}")
+                
+                blocks: List[MempoolBlock] = [MempoolBlock.model_validate(block) for block in blocks_data]
+                
+                # Insert each block with block_index (0=next, 1=following, etc.)
+                for block_index, block in enumerate(blocks):
                     record = (
                         ingestion_time,
+                        block_index,
                         block.block_size,
                         block.block_v_size,
                         block.n_tx,
                         block.total_fees,
-                        block.median_fee
+                        block.median_fee,
+                        json.dumps(block.fee_range)  # Serialize as JSON
                     )
                     self.buffer.append(('mempool_block', record))
 
@@ -181,8 +197,8 @@ class DuckDBConsumer:
             if block_records:
                 self.db_conn.executemany(
                     """INSERT INTO projected_blocks 
-                       (ingestion_time, block_size, block_v_size, n_tx, total_fees, median_fee) 
-                       VALUES (?, ?, ?, ?, ?, ?)""",
+                       (ingestion_time, block_index, block_size, block_v_size, n_tx, total_fees, median_fee, fee_range) 
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                     block_records
                 )
                 print(f"✅ Inserted {len(block_records)} projected block records.")

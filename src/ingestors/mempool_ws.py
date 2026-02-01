@@ -31,10 +31,14 @@ def route_message(data: Dict[str, Any], producer: MempoolProducer) -> None:
         data: Decoded JSON payload from WebSocket
         producer: Kafka producer instance
     """
-    # Silence conversions noise (initialization data)
-    if "conversions" in data:
+    # 1. Silence Noise (Initialization & UI data)
+    ignored_keys = {"conversions", "loadingIndicators", "init"}
+    if any(key in data for key in ignored_keys):
         return
     
+    # Track if we handled the message to warn about unknown structures
+    handled = False
+
     try:
         # Event Type 1: Mempool Stats
         if "mempoolInfo" in data:
@@ -45,45 +49,47 @@ def route_message(data: Dict[str, Any], producer: MempoolProducer) -> None:
                 value=stats.model_dump_json().encode("utf-8")
             )
             logger.info(f"✅ MempoolStats: size={stats.mempool_info.size}, bytes={stats.mempool_info.bytes}")
-            return
+            handled = True
+            # NO RETURN HERE: Continue checking for other keys in the same message
         
         # Event Type 2: Mempool Blocks (projected blocks)
-        if "mempool-blocks" in data or isinstance(data.get("blocks"), list):
-            # Handle both {"mempool-blocks": [...]} and {"blocks": [...]} formats
+        # Check specifically for the key we saw in the sniff script
+        if "mempool-blocks" in data or "blocks" in data:
+
+            # Handle both formats
             blocks_data = data.get("mempool-blocks") or data.get("blocks", [])
             
-            if not isinstance(blocks_data, list):
-                logger.warning(f"Expected list for mempool-blocks, got {type(blocks_data)}")
-                return
-            
-            # Validate each block
-            validated_blocks: List[Dict[str, Any]] = []
-            for block_data in blocks_data:
-                try:
-                    block = MempoolBlock.model_validate(block_data)
-                    validated_blocks.append(block.model_dump())
-                except ValidationError as e:
-                    logger.error(f"❌ MempoolBlock validation failed: {e}")
-                    continue
-            
-            if validated_blocks:
-                producer.produce(
-                    topic=settings.mempool_topic,
-                    key="mempool_block",
-                    value=json.dumps(validated_blocks).encode("utf-8")
-                )
-                logger.info(f"✅ MempoolBlocks: validated {len(validated_blocks)} projected blocks")
-            return
-        
-        # Event Type 3: Confirmed Block (signal only - future feature)
+            if isinstance(blocks_data, list):
+                # Validate each block
+                validated_blocks: List[Dict[str, Any]] = []
+                for block_data in blocks_data:
+                    try:
+                        block = MempoolBlock.model_validate(block_data)
+                        validated_blocks.append(block.model_dump())
+                    except ValidationError as e:
+                        logger.error(f"❌ MempoolBlock validation failed: {e} | Data: {block_data}")
+                        continue
+                
+                if validated_blocks:
+                    producer.produce(
+                        topic=settings.mempool_topic,
+                        key="mempool_block",
+                        value=json.dumps(validated_blocks).encode("utf-8")
+                    )
+                    logger.info(f"✅ MempoolBlocks: processed {len(validated_blocks)} blocks")
+                    handled = True
+            else:
+                logger.warning(f"⚠️ Expected list for blocks, got {type(blocks_data)}")
+
+        # Event Type 3: Confirmed Block (signal)
         if "block" in data:
-            block_hash = data.get("block", {}).get("id", "unknown")
-            block_height = data.get("block", {}).get("height", "unknown")
-            logger.info(f"📦 Confirmed block signal: height={block_height}, hash={block_hash[:16]}... (not processed)")
-            return
+            block_info = data.get("block", {})
+            logger.info(f"📦 Confirmed block signal: height={block_info.get('height')}")
+            handled = True
         
         # Unknown event type
-        logger.warning(f"⚠️  Unknown message structure: {list(data.keys())}")
+        if not handled:
+            logger.warning(f"⚠️  Unknown message structure: {list(data.keys())}")
     
     except ValidationError as e:
         logger.error(f"❌ Pydantic validation error: {e}")
@@ -107,38 +113,28 @@ async def mempool_ingestor() -> None:
                 
                 # Init handshake
                 await websocket.send(json.dumps({"action": "init"}))
+                
+                # Subscribe explicitly
                 await websocket.send(json.dumps({
                     "action": "want",
-                    "data": ["stats", "mempool-blocks"]
+                    "data": ["mempool-blocks", "stats"]
                 }))
                 
-                logger.info(f"🚀 Subscribed to stats and mempool-blocks. Producing to: {settings.mempool_topic}")
+                logger.info(f"🚀 Subscribed. Producing to: {settings.mempool_topic}")
                 
                 # Message loop
                 async for message in websocket:
                     try:
                         data = json.loads(message)
                         route_message(data, producer)
-                    except json.JSONDecodeError as e:
-                        logger.error(f"❌ JSON decode error: {e}")
-                        continue
-                    except Exception as e:
-                        logger.error(f"❌ Error processing message: {e}", exc_info=True)
+                    except json.JSONDecodeError:
+                        logger.error("❌ JSON decode error")
                         continue
         
-        except websockets.exceptions.WebSocketException as e:
-            logger.error(f"🔴 WebSocket error: {e}. Reconnecting in {retry_delay}s...")
-            await asyncio.sleep(retry_delay)
-        except KeyboardInterrupt:
-            logger.info("🔴 Ingestor stopped by user")
-            raise
         except Exception as e:
-            logger.error(f"🔴 Unexpected error: {e}. Reconnecting in {retry_delay}s...", exc_info=True)
+            logger.error(f"🔴 Connection error: {e}. Retrying in {retry_delay}s...")
             await asyncio.sleep(retry_delay)
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(mempool_ingestor())
-    except KeyboardInterrupt:
-        logger.info("👋 Shutdown complete")
+    asyncio.run(mempool_ingestor())
