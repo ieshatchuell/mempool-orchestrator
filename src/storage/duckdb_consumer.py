@@ -1,11 +1,21 @@
 import json
+from datetime import datetime, timezone
+from typing import List
 import duckdb
 from confluent_kafka import Consumer, KafkaError
+from pydantic import ValidationError
+
 from src.config import settings
+from src.schemas import MempoolStats, MempoolBlock
+
 
 class DuckDBConsumer:
     """
-    Consumes raw mempool events from Kafka and persists them into DuckDB.
+    Consumes typed mempool events from Kafka and persists them into structured DuckDB tables.
+    
+    Handles two event types:
+    - 'stats': Mempool statistics → mempool_stats table
+    - 'mempool_block': Projected blocks → projected_blocks table
     """
 
     def __init__(self):
@@ -22,34 +32,31 @@ class DuckDBConsumer:
         self.buffer = []
 
     def _init_db(self):
-        """Ensures the target table and parsed views exist."""
-        # Bronze Layer: Raw Data
+        """Creates structured tables for mempool stats and projected blocks."""
+        # Mempool Statistics Table
         self.db_conn.execute("""
-            CREATE TABLE IF NOT EXISTS raw_mempool (
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                key VARCHAR,
-                data JSON
+            CREATE TABLE IF NOT EXISTS mempool_stats (
+                ingestion_time TIMESTAMP NOT NULL,
+                size UINTEGER NOT NULL,
+                bytes UINTEGER NOT NULL,
+                total_fee UBIGINT NOT NULL,
+                min_fee DOUBLE NOT NULL
             )
         """)
         
-        # Silver Layer: Parsed Stats View
-        # Extract metrics from 'mempoolInfo' object comming from 'stats' messages
+        # Projected Blocks Table
         self.db_conn.execute("""
-            CREATE OR REPLACE VIEW v_mempool_stats AS
-            SELECT 
-                timestamp,
-                (data->>'$.mempoolInfo.size')::INTEGER as tx_count,
-                (data->>'$.mempoolInfo.bytes')::BIGINT as total_bytes,
-                (data->>'$.mempoolInfo.usage')::BIGINT as memory_usage,
-                -- El campo total_fee ya viene en BTC en el JSON de stats
-                (data->>'$.mempoolInfo.total_fee')::DOUBLE as total_fee_btc,
-                -- Cálculo derivado: Fee media por transacción en Satoshis
-                ((data->>'$.mempoolInfo.total_fee')::DOUBLE * 100000000.0) / 
-                 NULLIF((data->>'$.mempoolInfo.size')::INTEGER, 0) as avg_tx_fee_sats
-            FROM raw_mempool
-            WHERE key = 'stats'
+            CREATE TABLE IF NOT EXISTS projected_blocks (
+                ingestion_time TIMESTAMP NOT NULL,
+                block_size UINTEGER NOT NULL,
+                block_v_size UINTEGER NOT NULL,
+                n_tx UINTEGER NOT NULL,
+                total_fees UBIGINT NOT NULL,
+                median_fee DOUBLE NOT NULL
+            )
         """)
-        print(f"📦 DuckDB initialized. Bronze table and Silver view 'v_mempool_stats' ready.")
+        
+        print("📦 DuckDB initialized. Tables 'mempool_stats' and 'projected_blocks' ready.")
 
     def consume_loop(self):
         """Main loop to consume messages and trigger batch writes."""
@@ -59,15 +66,19 @@ class DuckDBConsumer:
         try:
             while True:
                 msg = self.consumer.poll(1.0)
-                if msg is None: continue
+                if msg is None:
+                    continue
                 if msg.error():
-                    if msg.error().code() == KafkaError._PARTITION_EOF: continue
-                    else: print(f"Error: {msg.error()}"); break
+                    if msg.error().code() == KafkaError._PARTITION_EOF:
+                        continue
+                    else:
+                        print(f"❌ Kafka Error: {msg.error()}")
+                        break
 
-                key = msg.key().decode('utf-8') if msg.key() else "unknown"
-                value = msg.value().decode('utf-8')
-                self.buffer.append((key, value))
+                # Process message with resilient parsing
+                self.process_message(msg)
 
+                # Flush buffer when batch size is reached
                 if len(self.buffer) >= settings.duckdb_batch_size:
                     self._flush_to_db()
 
@@ -75,6 +86,61 @@ class DuckDBConsumer:
             print("\n🛑 Shutdown signal received.")
         finally:
             self._cleanup()
+
+    def process_message(self, msg):
+        """
+        Routes Kafka messages to appropriate handlers based on key.
+        
+        - b'stats' → Parse as MempoolStats → Insert into mempool_stats
+        - b'mempool_block' → Parse as List[MempoolBlock] → Insert into projected_blocks
+        """
+        try:
+            key = msg.key()
+            value_str = msg.value().decode('utf-8')
+            ingestion_time = datetime.now(timezone.utc)
+
+            if key == b'stats':
+                # Parse and validate as MempoolStats
+                data = json.loads(value_str)
+                stats = MempoolStats.model_validate(data)
+                
+                # Extract fields from nested structure
+                info = stats.mempool_info
+                record = (
+                    ingestion_time,
+                    info.size,
+                    info.bytes,
+                    int(info.total_fee * 100_000_000),  # Convert BTC to Satoshis
+                    info.mempool_min_fee or 0.0
+                )
+                self.buffer.append(('stats', record))
+
+            elif key == b'mempool_block':
+                # Parse and validate as List[MempoolBlock]
+                data = json.loads(value_str)
+                blocks: List[MempoolBlock] = [MempoolBlock.model_validate(block) for block in data]
+                
+                # Insert each block with the same ingestion timestamp
+                for block in blocks:
+                    record = (
+                        ingestion_time,
+                        block.block_size,
+                        block.block_v_size,
+                        block.n_tx,
+                        block.total_fees,
+                        block.median_fee
+                    )
+                    self.buffer.append(('mempool_block', record))
+
+            else:
+                print(f"⚠️ Unknown message key: {key!r}")
+
+        except json.JSONDecodeError as e:
+            print(f"⚠️ JSON decode error: {e}")
+        except ValidationError as e:
+            print(f"⚠️ Validation error for key {msg.key()!r}: {e}")
+        except Exception as e:
+            print(f"⚠️ Unexpected error processing message: {e}")
 
     def _cleanup(self):
         """Final flush and resource release."""
@@ -97,16 +163,37 @@ class DuckDBConsumer:
             return
 
         try:
-            # Efficient batch insertion
-            self.db_conn.executemany(
-                "INSERT INTO raw_mempool (key, data) VALUES (?, ?)", 
-                self.buffer
-            )
-            self.consumer.commit()  # Only commit Kafka after DB write is successful
-            print(f"✅ Persisted {len(self.buffer)} records to DuckDB.")
+            # Separate records by type
+            stats_records = [r for k, r in self.buffer if k == 'stats']
+            block_records = [r for k, r in self.buffer if k == 'mempool_block']
+
+            # Batch insert stats
+            if stats_records:
+                self.db_conn.executemany(
+                    """INSERT INTO mempool_stats 
+                       (ingestion_time, size, bytes, total_fee, min_fee) 
+                       VALUES (?, ?, ?, ?, ?)""",
+                    stats_records
+                )
+                print(f"✅ Inserted {len(stats_records)} stats records.")
+
+            # Batch insert projected blocks
+            if block_records:
+                self.db_conn.executemany(
+                    """INSERT INTO projected_blocks 
+                       (ingestion_time, block_size, block_v_size, n_tx, total_fees, median_fee) 
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    block_records
+                )
+                print(f"✅ Inserted {len(block_records)} projected block records.")
+
+            # Only commit Kafka offset after successful DB writes
+            self.consumer.commit()
             self.buffer = []
+
         except Exception as e:
-            print(f"CRITICAL: Failed to persist batch to DuckDB: {e}")
+            print(f"❌ CRITICAL: Failed to persist batch to DuckDB: {e}")
+
 
 if __name__ == "__main__":
     DuckDBConsumer().consume_loop()
