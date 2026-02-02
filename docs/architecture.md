@@ -1,34 +1,52 @@
 # System Architecture
 
-## 1. High-Level Data Flow (V4)
-The system follows a **Hybrid Signal & Fetch** pattern with typed storage and real-time observability.
+## 1. High-Level Data Flow (V5)
+The system follows a **Hybrid Architecture** combining local processes for speed with containerized AI for isolation.
 
 ```
-[External WebSocket: mempool.space] 
-      |
-      v (Async Streaming - "Radar")
-[Ingestor: src.ingestors.mempool_ws] 
-      |
-      v (Internal Library)
-[Producer: src.common.kafka_producer]
-      |
-      v (Kafka Protocol)
-[Broker: Redpanda (Topic: mempool-raw)]
-      |
-      v (Manual Offset Commit)
-[Consumer: src.storage.duckdb_consumer]
-      |
-      v (Batch Write + Pydantic Validation)
-[Storage: DuckDB (mempool_data.duckdb)]
-      |
-      v (Read-Only Queries)
-[Dashboard: Streamlit UI]
+┌─────────────────────────────────────────────────────────────────┐
+│                     HOST MACHINE (Local Processes)              │
+│                                                                 │
+│  [External WebSocket: mempool.space]                            │
+│        │                                                        │
+│        v (Async Streaming - "Radar")                            │
+│  [Ingestor: src.ingestors.mempool_ws]                          │
+│        │                                                        │
+│        v (Internal Library)                                     │
+│  [Producer: src.common.kafka_producer]                         │
+│        │                                                        │
+│        v (Kafka Protocol)                                       │
+│  ┌─────────────────┐    ┌──────────────────────────────────┐   │
+│  │ Redpanda        │    │ mempool_data.duckdb              │   │
+│  │ (Docker)        │───▶│ (Write Lock: Local Process)      │   │
+│  └─────────────────┘    └────────────┬─────────────────────┘   │
+│                                      │                          │
+└──────────────────────────────────────│──────────────────────────┘
+                                       │ :ro volume mount
+┌──────────────────────────────────────│──────────────────────────┐
+│                     DOCKER NETWORK   │                          │
+│                                      v                          │
+│  ┌─────────────────┐    ┌──────────────────────────────────┐   │
+│  │ Ollama          │◀───│ Orchestrator                     │   │
+│  │ (Llama 3.2)     │    │ (Read-Only DuckDB Access)        │   │
+│  └─────────────────┘    └──────────────────────────────────┘   │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Concurrency Pattern: Writer + Reader Isolation
+
+| Component | Runtime | Access Mode | Purpose |
+|-----------|---------|-------------|---------|
+| Storage Consumer | Local (uv) | **Write** | Kafka → DuckDB persistence |
+| AI Orchestrator | Docker | **Read-Only** | Query DuckDB via `:ro` mount |
+
+> **Critical:** The Orchestrator uses `read_only=True` when connecting to DuckDB, preventing write lock conflicts with the local Storage process.
 
 [External REST API: mempool.space/api]
       |
       v (On-Demand Fetch - "Fetcher")
 [API Client: src.ingestors.mempool_api]
-```
 
 ## 2. Component Breakdown
 

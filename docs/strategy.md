@@ -28,6 +28,16 @@ The project addresses the auction market for Bitcoin block space.
   - ✅ Analytics dashboard for real-time observability
   - ✅ Storage schema evolution (`block_index` ordering, `fee_range` arrays)
 
+### Q1.5: The Agentic Brain (Infrastructure) - [COMPLETED]
+- **Technical Goal:** Deploy local LLM infrastructure (Ollama + Llama 3.2) and AI Orchestrator service.
+- **Business Goal:** Enable AI-driven analysis of mempool data with structured reasoning.
+- **Status:**
+  - ✅ Ollama service in Docker with model persistence
+  - ✅ AI Orchestrator with read-only DuckDB access
+  - ✅ Hybrid architecture (local writer + containerized reader)
+  - ✅ PydanticAI integration for agentic workflows
+  - ⏳ **Next:** Develop PydanticAI Skills/Tools for mempool analysis
+
 ### Q2: The Memory (Modeling & Intelligence)
 - **Technical Goal:** Advanced transaction parsing and historical trend analysis.
 - **Business Goal:** Identify fee-saving patterns and whale movement detection.
@@ -38,4 +48,4 @@ The project addresses the auction market for Bitcoin block space.
 
 ---
 **Lead Engineer:** Israel (@ieshatchuell)
-**Status:** Storage Layer Integrated.
+**Status:** Phase 2 Agentic Brain Infrastructure Complete.

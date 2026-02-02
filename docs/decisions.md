@@ -349,3 +349,86 @@ During production deployment of the WebSocket ingestor, Pydantic validation fail
 1. ✅ Monitor production ingestion for additional type mismatches
 2. ⏳ Add integration test with real API payload fixtures
 3. ⏳ Consider schema versioning strategy before production deployment
+
+---
+
+## ADR-004: Hybrid Infrastructure & Read-Only Volume Strategy
+**Date:** 2026-02-02  
+**Status:** ✅ IMPLEMENTED  
+**Phase:** Phase 2 - The Agentic Brain (Infrastructure)
+
+### Context
+
+The system requires an AI Orchestrator (using Ollama + Llama 3.2) to query the DuckDB database for reasoning and analysis. However:
+
+1. **Current Write Process:** The `storage` service runs as a local process using `uv run`, writing to `mempool_data.duckdb` with exclusive file locks.
+2. **Dockerization Constraint:** Fully dockerizing the storage process would reduce dev speed and add complexity.
+3. **Concurrency Risk:** Two processes (local writer + container reader) accessing the same DuckDB file can cause file lock conflicts.
+
+### Decision
+
+**Adopt a Hybrid Infrastructure with Read-Only Volume Mounts:**
+
+1. **Local Processes (Speed):**
+   - `ingestor` (WebSocket Radar)
+   - `storage` (DuckDB Writer)
+   - Benefits: Fast iteration, direct file access, no Docker overhead for hot-path data.
+
+2. **Docker Containers (Isolation):**
+   - `ollama` (Llama 3.2 model server)
+   - `orchestrator` (AI Agent)
+   - Benefits: GPU isolation, reproducible environment, network-isolated LLM inference.
+
+3. **Read-Only Volume Mount Strategy:**
+   ```yaml
+   orchestrator:
+     volumes:
+       - ..:/app/data:ro  # Critical: Read-Only flag
+   ```
+   
+   The Orchestrator connects with `read_only=True`:
+   ```python
+   conn = duckdb.connect(DUCKDB_PATH, read_only=True)
+   ```
+
+4. **LLM Selection:**
+   - **Model:** Llama 3.2 (3B) via Ollama
+   - **Rationale:** Balance of reasoning capability and inference speed on local hardware.
+   - **Integration:** PydanticAI for structured tool/agent workflows.
+
+### Consequences
+
+**Positive:**
+1. **Zero Lock Conflicts:** Read-only access guarantees no write contention with the local storage process.
+2. **Dev Velocity:** Ingestion pipeline remains local, avoiding Docker rebuild cycles during iteration.
+3. **Clean Separation:** AI workloads isolated in containers; data pipeline remains lightweight.
+4. **Cost Efficiency:** Local LLM inference (no API costs); GPU resources dedicated to Ollama container.
+
+**Trade-offs:**
+1. **Eventual Consistency:** Orchestrator reads may lag behind live writes by the batch interval (~seconds).
+2. **Path Mapping:** `DUCKDB_PATH` must be correctly mapped between host and container (`/app/data/mempool_data.duckdb`).
+3. **Partial Dockerization:** Mixed runtime (local + Docker) adds operational complexity vs. full containerization.
+
+### Implementation Details
+
+**New Dependencies:**
+```toml
+"ollama>=0.5.1"       # LLM client
+"pydantic-ai>=0.3.1"  # Agent framework
+"loguru>=0.7.3"       # Structured logging
+```
+
+**Docker Services:**
+- `ollama`: Model server on port 11434 with persistent volume for downloaded models.
+- `orchestrator`: Python 3.12 + uv environment with read-only project mount.
+
+**Justfile Recipes:**
+- `just ai-up`: Start Ollama + Orchestrator
+- `just ai-down`: Stop AI services
+- `just ai-logs`: Tail Orchestrator logs
+- `just orchestrator`: Run locally for development
+
+### Related Files
+- [Dockerfile](file:///Users/ieshatchuell/Projects/mempool-orchestrator/Dockerfile)
+- [docker-compose.yml](file:///Users/ieshatchuell/Projects/mempool-orchestrator/infra/docker-compose.yml)
+- [src/orchestrator/main.py](file:///Users/ieshatchuell/Projects/mempool-orchestrator/src/orchestrator/main.py)

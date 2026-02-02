@@ -83,3 +83,28 @@ storage:
 dashboard:
     @echo "🚀 Launching Mempool Dashboard..."
     @uv run --with streamlit streamlit run dashboard.py
+
+# ==========================================
+# AI ORCHESTRATOR (Phase 2)
+# ==========================================
+
+# Start AI infrastructure (Ollama + Orchestrator)
+ai-up:
+    @echo "{{green}}🧠 Starting AI Infrastructure...{{reset}}"
+    cd infra && docker compose up -d ollama orchestrator
+    @echo "{{green}}✅ AI services started.{{reset}}"
+
+# Stop AI infrastructure
+ai-down:
+    @echo "{{green}}🧠 Stopping AI Infrastructure...{{reset}}"
+    cd infra && docker compose stop ollama orchestrator
+    @echo "{{green}}💤 AI services stopped.{{reset}}"
+
+# Run orchestrator locally (for development)
+orchestrator:
+    @echo "{{green}}🧠 Running AI Orchestrator locally...{{reset}}"
+    uv run python -m src.orchestrator.main
+
+# View orchestrator logs
+ai-logs:
+    docker logs -f orchestrator

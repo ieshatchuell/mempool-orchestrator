@@ -6,6 +6,8 @@ An agentic data platform designed to ingest, process, and optimize Bitcoin mempo
 - **Runtime:** Python 3.12+ (managed by `uv`)
 - **Event Broker:** Redpanda (Kafka-compatible)
 - **Database:** DuckDB (OLAP Storage)
+- **AI/LLM:** Ollama + Llama 3.2 (Local Inference)
+- **Agent Framework:** PydanticAI (Structured Workflows)
 - **Analytics UI:** Streamlit (Real-time Dashboard)
 - **Data Science:** Pandas / NumPy (Auditing & Analysis)
 - **Infrastructure:** Docker / OrbStack
@@ -26,6 +28,7 @@ The `.agent/` directory acts as "Infrastructure as Code" for the development wor
 - **Python 3.12+** (managed via `uv`)
 - **Docker** (via OrbStack recommended)
 - **Just** (Command Runner)
+- **Ollama** (optional, for local LLM inference)
 
 ### Configuration
 Create a `.env` file in the project root:
@@ -55,18 +58,39 @@ just storage
 # 5. Launch Analytics Dashboard
 just dashboard
 
-# 6. Stop Infrastructure
+# 6. Start AI Infrastructure (Ollama + Orchestrator)
+just ai-up
+
+# 7. View Orchestrator Logs
+just ai-logs
+
+# 8. Stop AI Infrastructure
+just ai-down
+
+# 9. Stop Infrastructure
 just infra-down
 ```
 
 ## 📊 Data Access & Architecture
 
-The system implements a **Hybrid Signal & Fetch Architecture** with typed storage for analytical performance.
+The system implements a **Hybrid Architecture** combining local processes for speed with containerized AI for isolation.
 
 ### 1. Hybrid Architecture
+
+| Layer | Runtime | Purpose |
+|-------|---------|--------|
+| **Ingestion** | Local (uv) | Low-latency WebSocket streaming |
+| **Storage** | Local (uv) | DuckDB writes with file locking |
+| **AI Orchestrator** | Docker | Isolated LLM inference environment |
+| **Ollama** | Docker | Local Llama 3.2 model serving |
+
+> **Critical Pattern:** The Dockerized Orchestrator reads `mempool_data.duckdb` via a **Read-Only Volume Mount** (`:ro`) while the local Storage process writes to it. This prevents file locking conflicts.
+
+### 2. Data Flow
 - **Radar (WebSocket):** Real-time signals from `mempool.space` for mempool stats and projected blocks.
 - **Fetcher (REST API):** On-demand fetching of confirmed block data for auditing and backfill.
 - **Vault (DuckDB):** Typed storage with Pydantic validation at ingestion boundary.
+- **Brain (Orchestrator):** AI agent that queries DuckDB and reasons via Ollama.
 
 ### 2. Typed Schema (Silver Layer)
 
