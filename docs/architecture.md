@@ -103,7 +103,63 @@ The Radar pattern provides a lightweight, metadata-first approach to ingesting B
     - Data quality monitoring
 - **Launch:** `just dashboard`
 
-### E. Common Infrastructure & Configuration
+### E. The Orchestrator (Neuro-Symbolic Brain)
+
+The Orchestrator implements a **Safe-Guarded Hybrid AI** pattern:
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│                    DECISION PIPELINE                           │
+│                                                                │
+│  MempoolContext ─────┐                                         │
+│  (from DuckDB)       │                                         │
+│                      v                                         │
+│              ┌───────────────────┐                             │
+│              │ evaluate_market   │  LAYER 1: PYTHON (Critical) │
+│              │ _rules()          │  - Deterministic            │
+│              └─────────┬─────────┘  - Zero latency             │
+│                        │                                       │
+│                        v                                       │
+│              ┌───────────────────┐                             │
+│              │ MarketDecision    │  (action, recommended_fee)  │
+│              └─────────┬─────────┘                             │
+│                        │                                       │
+│                        v                                       │
+│              ┌───────────────────┐                             │
+│              │ get_ai_reasoning()│  LAYER 2: LLM (Non-Critical)│
+│              │ via Llama 3.2    │  - Generates commentary      │
+│              └─────────┬─────────┘  - Fallback if unavailable  │
+│                        │                                       │
+│                        v                                       │
+│              ┌───────────────────┐                             │
+│              │ AgentDecision     │  Final output with reasoning│
+│              └───────────────────┘                             │
+│                                                                │
+└────────────────────────────────────────────────────────────────┘
+```
+
+#### The Sidecar Pattern
+
+The AI acts as a **non-critical sidecar**:
+
+| Scenario | Python Logic | AI Narrative | Result |
+|----------|-------------|--------------|--------|
+| Normal | ✅ Computes decision | ✅ Generates reasoning | Full decision + explanation |
+| AI Timeout | ✅ Computes decision | ⏱️ Timeout (30s) | Decision + fallback text |
+| AI Offline | ✅ Computes decision | ❌ Error caught | Decision + fallback text |
+
+> **Key Insight:** The system **never fails** to make a decision. The LLM provides "nice to have" commentary but cannot block the critical path.
+
+#### Performance Characteristics
+
+| Metric | Pure LLM (v1) | Neuro-Symbolic (v2) |
+|--------|--------------|---------------------|
+| Decision Latency | ~40s | ~1.3s |
+| JSON Parse Errors | Frequent | Zero |
+| Arithmetic Errors | Occasional | Zero |
+| Graceful Degradation | ❌ | ✅ |
+
+### F. Common Infrastructure & Configuration
 - **Kafka Wrapper:** `MempoolProducer` with non-blocking `poll(0)` and delivery callbacks.
 - **Configuration:** `src/config.py` using Pydantic Settings. Enforces strict types and strips whitespace from environment variables.
   - `kafka_bootstrap_servers`: Kafka broker connection string

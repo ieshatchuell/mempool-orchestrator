@@ -36,16 +36,36 @@ The project addresses the auction market for Bitcoin block space.
   - ✅ AI Orchestrator with read-only DuckDB access
   - ✅ Hybrid architecture (local writer + containerized reader)
   - ✅ PydanticAI integration for agentic workflows
-  - ⏳ **Next:** Develop PydanticAI Skills/Tools for mempool analysis
+  - ✅ **PIVOTED:** Neuro-Symbolic Architecture (see below)
+
+### Q1.6: Neuro-Symbolic AI Pivot - [COMPLETED]
+- **Technical Goal:** Refactor Orchestrator from "Pure LLM Agent" to "Safe-Guarded Hybrid".
+- **Business Goal:** Achieve 100% reliability and sub-second decision latency.
+- **Status:**
+  - ✅ Python logic layer for deterministic decisions (Layer 1)
+  - ✅ LLM narrative layer for human-readable reasoning (Layer 2)
+  - ✅ Performance: ~40s → ~1.3s (~30x improvement)
+  - ✅ Graceful degradation when AI is unavailable
+
+#### Strategy Rules (Deterministic - Python)
+
+The decision strategy is now **code**, not prompts:
+
+| Condition | Action | Target Fee |
+|-----------|--------|------------|
+| `fee_premium_pct > 20%` | **WAIT** | Historical Median Fee |
+| `fee_premium_pct <= 20%` | **BROADCAST** | Current Median Fee |
+
+> **Key Insight:** The LLM never makes decisions. It only explains why the Python-computed decision makes sense.
 
 ### Q2: The Memory (Modeling & Intelligence)
 - **Technical Goal:** Advanced transaction parsing and historical trend analysis.
 - **Business Goal:** Identify fee-saving patterns and whale movement detection.
 
-### Q3: The Intelligence (Agentic Decision Layer)
-- **Technical Goal:** Integrate LLMs as reasoning engines for autonomous bidding.
-- **Business Goal:** Transition from "Observer" to "Orchestrator".
+### Q3: Advanced Orchestration
+- **Technical Goal:** Multi-strategy support, RBF/CPFP automation.
+- **Business Goal:** Transition from "Observer" to active "Treasury Operator".
 
 ---
 **Lead Engineer:** Israel (@ieshatchuell)
-**Status:** Phase 2 Agentic Brain Infrastructure Complete.
+**Status:** Phase 2.5 Neuro-Symbolic Pivot Complete.
