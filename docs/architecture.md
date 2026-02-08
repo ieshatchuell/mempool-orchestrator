@@ -168,6 +168,25 @@ The AI acts as a **non-critical sidecar**:
   - `mempool_api_url`: REST API base URL
   - `duckdb_path`: Database file path
   - `duckdb_batch_size`: Batch flush size
+  - `agent_history_path`: Agent decision history database
+
+### G. Persistence Layer (Agent Memory)
+
+The system implements a **Split Storage Pattern** to avoid file lock conflicts:
+
+| Database | Writer | Reader | Mount |
+|----------|--------|--------|-------|
+| `mempool_data.duckdb` | Storage Service (Local) | Orchestrator (Docker) | `:ro` |
+| `agent_history.duckdb` | Orchestrator (Docker) | Auditing/Backtest | `:rw` |
+
+**Schema (`decision_history` table):**
+- `timestamp`: TIMESTAMP (UTC)
+- `action`: VARCHAR (WAIT/BROADCAST)
+- `current_fee`: UBIGINT (sat/vB)
+- `recommended_fee`: UBIGINT (sat/vB)
+- `ai_confidence`: DOUBLE (0.0-1.0)
+- `ai_reasoning`: VARCHAR (LLM explanation)
+- `model_version`: VARCHAR (e.g., "neuro-symbolic-v1")
 
 ## 3. Package Structure Standards
 - `src.common`: Shared infrastructure clients.

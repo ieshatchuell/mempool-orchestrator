@@ -21,8 +21,10 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.settings import ModelSettings
 
+from src.config import settings
 from src.orchestrator.schemas import AgentDecision, MempoolContext
 from src.orchestrator.tools import get_market_context
+from src.storage.agent_history import AgentDecisionRecord, AgentHistory
 
 
 # =============================================================================
@@ -220,7 +222,12 @@ async def decision_loop(agent: Agent[None, str]) -> None:
     3. Get AI reasoning (LLM - NON-CRITICAL, with fallback)
     4. Merge into final AgentDecision
     5. Log result
+    6. Persist decision to history (NON-CRITICAL)
     """
+    # Initialize persistence layer
+    history = AgentHistory(settings.agent_history_path)
+    logger.info(f"📂 Agent History initialized at {settings.agent_history_path}")
+    
     logger.info("🧠 Bitcoin Treasury Agent starting...")
     logger.info("🔒 SAFE-GUARDED AI MODE: Deterministic logic + AI commentary")
     logger.info(f"   OLLAMA_HOST: {OLLAMA_HOST}")
@@ -262,6 +269,21 @@ async def decision_loop(agent: Agent[None, str]) -> None:
                 f"Confidence: {final_decision.confidence:.0%}"
             )
             logger.info(f"   Reasoning: {final_decision.reasoning}")
+            
+            # Step F: Persist decision to history (silent, non-critical)
+            try:
+                record = AgentDecisionRecord(
+                    action=final_decision.action,
+                    current_fee=round(context.current_median_fee),
+                    recommended_fee=final_decision.recommended_fee,
+                    ai_confidence=final_decision.confidence,
+                    ai_reasoning=final_decision.reasoning,
+                    model_version="neuro-symbolic-v1",
+                )
+                history.save_decision(record)
+                logger.debug("💾 Decision persisted to history.")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to persist decision: {type(e).__name__}: {e}")
             
         except RuntimeError as e:
             logger.error(f"❌ Data error: {e}")

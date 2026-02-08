@@ -61,6 +61,10 @@ The decision strategy is now **code**, not prompts:
 ### Q2: The Memory (Modeling & Intelligence)
 - **Technical Goal:** Advanced transaction parsing and historical trend analysis.
 - **Business Goal:** Identify fee-saving patterns and whale movement detection.
+- **Status:**
+  - ✅ Persistence & Decision Logging (Split Storage Pattern)
+  - ⏳ Auditing & Backtesting
+  - ⏳ Historical trend analysis
 
 ### Q3: Advanced Orchestration
 - **Technical Goal:** Multi-strategy support, RBF/CPFP automation.
