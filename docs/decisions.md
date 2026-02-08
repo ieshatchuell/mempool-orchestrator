@@ -565,3 +565,55 @@ async def get_ai_reasoning(agent, ctx, decision) -> str:
 - [main.py](../src/orchestrator/main.py)
 - [schemas.py](../src/orchestrator/schemas.py)
 - [tools.py](../src/orchestrator/tools.py)
+
+---
+
+## ADR-006: Dedicated Database for Agent History
+**Date:** 2026-02-08  
+**Status:** ✅ IMPLEMENTED  
+**Phase:** Phase 2 - The Memory
+
+### Context
+
+The Orchestrator needed to persist its decisions (Action, Fee, Reasoning) for auditing and backtesting. However:
+
+1. **Single-Writer Constraint:** DuckDB enforces single-process write locks. The local Storage process holds the lock on `mempool_data.duckdb`.
+2. **Docker Isolation:** The Orchestrator runs in Docker with `mempool_data.duckdb` mounted as read-only (`:ro`).
+3. **Lock Conflict:** Attempting writes from Docker caused `IOException: Could not set lock on file`.
+
+### Decision
+
+**Use a separate database file (`agent_history.duckdb`) for agent logs:**
+
+1. **Market Data:** `mempool_data.duckdb` (Host writes, Docker reads)
+2. **Agent Memory:** `agent_history.duckdb` (Docker writes, Host reads)
+
+**Docker Volume Configuration:**
+```yaml
+volumes:
+  - ..:/app/data:ro                                    # Market data
+  - ../agent_history.duckdb:/app/agent_history.duckdb:rw  # Agent memory
+```
+
+**Implementation:**
+- New module: `src/storage/agent_history.py`
+- Config field: `agent_history_path` in `src/config.py`
+- Test suite: `tests/test_agent_history.py` (9 tests)
+
+### Consequences
+
+**Positive:**
+1. Eliminates lock contention between Host and Docker processes.
+2. Simplifies Docker volume permissions (clear RO vs RW separation).
+3. Enables independent auditing of agent decisions.
+4. Graceful degradation: persistence failures don't crash the agent loop.
+
+**Trade-offs:**
+1. Data split across two files (use `ATTACH` for unified queries).
+2. Two database files to manage for backup/migration.
+
+### Related Files
+- [agent_history.py](../src/storage/agent_history.py)
+- [config.py](../src/config.py)
+- [docker-compose.yml](../infra/docker-compose.yml)
+

@@ -56,6 +56,7 @@ MEMPOOL_WS_URL=wss://mempool.space/api/v1/ws
 MEMPOOL_API_URL=https://mempool.space/api
 DUCKDB_PATH=mempool_data.duckdb
 DUCKDB_BATCH_SIZE=50
+AGENT_HISTORY_PATH=agent_history.duckdb
 ```
 
 ### Commands
@@ -108,6 +109,7 @@ The system implements a **Hybrid Architecture** combining local processes for sp
 - **Fetcher (REST API):** On-demand fetching of confirmed block data for auditing and backfill.
 - **Vault (DuckDB):** Typed storage with Pydantic validation at ingestion boundary.
 - **Brain (Orchestrator):** Neuro-Symbolic agent: Python computes decisions, Llama 3.2 generates explanations.
+- **Agent Memory:** Dedicated `agent_history.duckdb` for storing decision logs (Action, Reasoning, Fee) to ensure auditability and avoid write conflicts.
 
 ### 3. Typed Schema (Silver Layer)
 

@@ -35,9 +35,11 @@ services:
       - ollama
     environment:
       - DUCKDB_PATH=/app/data/mempool_data.duckdb
+      - AGENT_HISTORY_PATH=/app/agent_history.duckdb
       - OLLAMA_HOST=http://ollama:11434
     volumes:
       - ..:/app/data:ro  # Read-only mount of project root
+      - ../agent_history.duckdb:/app/agent_history.duckdb:rw  # RW for agent decisions
     command: uv run python -m src.orchestrator.main
 
 volumes:
