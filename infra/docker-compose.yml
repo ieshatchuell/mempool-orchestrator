@@ -27,19 +27,19 @@ services:
 
   orchestrator:
     build:
-      context: ..
+      context: ../backend
       dockerfile: Dockerfile
     container_name: orchestrator
     depends_on:
       - redpanda
       - ollama
     environment:
-      - DUCKDB_PATH=/app/data/mempool_data.duckdb
-      - AGENT_HISTORY_PATH=/app/agent_history.duckdb
+      - DUCKDB_PATH=/app/data/market/mempool_data.duckdb
+      - AGENT_HISTORY_PATH=/app/data/history/agent_history.duckdb
       - OLLAMA_HOST=http://ollama:11434
     volumes:
-      - ..:/app/data:ro  # Read-only mount of project root
-      - ../agent_history.duckdb:/app/agent_history.duckdb:rw  # RW for agent decisions
+      - ../data/market:/app/data/market:ro    # Read-only market data
+      - ../data/history:/app/data/history:rw  # Read-write agent history
     command: uv run python -m src.orchestrator.main
 
 volumes:

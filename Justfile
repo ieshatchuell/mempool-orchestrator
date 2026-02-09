@@ -48,14 +48,41 @@ infra-logs:
     cd infra && docker compose logs -f
 
 # ==========================================
-# DATA PIPELINE (Python / UV)
+# DATA PIPELINE (Backend / UV)
 # ==========================================
 
 # Run the Mempool WebSocket Ingestor (The "Radar")
 radar:
     @echo "{{green}}📡 Launching Mempool Ingestor (Topic: mempool-raw)...{{reset}}"
-    @# We use 'uv run' to ensure the correct Python 3.12 virtual environment is used
-    uv run python -m src.ingestors.mempool_ws
+    cd backend && uv run python -m src.ingestors.mempool_ws
+
+# Run the DuckDB Storage Consumer
+storage:
+    @echo "📦 Starting DuckDB Storage Consumer..."
+    cd backend && uv run python -m src.storage.duckdb_consumer
+
+# Run orchestrator locally (for development)
+orchestrator:
+    @echo "{{green}}🧠 Running AI Orchestrator locally...{{reset}}"
+    cd backend && uv run python -m src.orchestrator.main
+
+# ==========================================
+# FRONTEND (Streamlit UI)
+# ==========================================
+
+# Launch the analytics dashboard
+dashboard:
+    @echo "🚀 Launching Mempool Dashboard..."
+    cd frontend && uv run streamlit run app/main.py
+
+# ==========================================
+# TESTING
+# ==========================================
+
+# Run backend test suite
+test:
+    @echo "{{green}}🧪 Running Backend Tests...{{reset}}"
+    cd backend && uv run pytest -v
 
 # ==========================================
 # MAINTENANCE & UTILS
@@ -64,25 +91,25 @@ radar:
 # Run a full system health check (Python env + Docker connectivity)
 check:
     @echo "{{green}}🛠️  Performing System Health Check...{{reset}}"
-    @echo "\n[1/2] Python Environment (via UV):"
-    @uv run python --version
-    @echo "\n[2/2] Infra Status:"
+    @echo "\n[1/3] Backend Python Environment (via UV):"
+    @cd backend && uv run python --version
+    @echo "\n[2/3] Frontend Python Environment (via UV):"
+    @cd frontend && uv run python --version
+    @echo "\n[3/3] Infra Status:"
     @cd infra && docker compose ps
 
-# Sync project dependencies from pyproject.toml
+# Sync dependencies in both workspaces
 sync:
-    @echo "{{green}}📦 Syncing dependencies...{{reset}}"
-    uv sync
+    @echo "{{green}}📦 Syncing Backend dependencies...{{reset}}"
+    cd backend && uv sync
+    @echo "{{green}}📦 Syncing Frontend dependencies...{{reset}}"
+    cd frontend && uv sync
+    @echo "{{green}}✅ All dependencies synced.{{reset}}"
 
-# Run the DuckDB Storage Consumer
-storage:
-    @echo "📦 Starting DuckDB Storage Consumer..."
-    uv run python -m src.storage.duckdb_consumer
-
-# Launch the analytics dashboard
-dashboard:
-    @echo "🚀 Launching Mempool Dashboard..."
-    @uv run --with streamlit streamlit run dashboard.py
+# Debug the DuckDB database
+debug-db:
+    @echo "🔍 Running DB Debug Script..."
+    uv run python scripts/debug_db.py
 
 # ==========================================
 # AI ORCHESTRATOR (Phase 2)
@@ -99,11 +126,6 @@ ai-down:
     @echo "{{green}}🧠 Stopping AI Infrastructure...{{reset}}"
     cd infra && docker compose stop ollama orchestrator
     @echo "{{green}}💤 AI services stopped.{{reset}}"
-
-# Run orchestrator locally (for development)
-orchestrator:
-    @echo "{{green}}🧠 Running AI Orchestrator locally...{{reset}}"
-    uv run python -m src.orchestrator.main
 
 # View orchestrator logs
 ai-logs:

@@ -1,6 +1,15 @@
+import os
 import streamlit as st
 import pandas as pd
 import numpy as np
+import duckdb
+from dotenv import load_dotenv
+
+# Load environment variables from root .env
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../../.env"))
+
+# Configuration via environment variables (fully decoupled from backend)
+DUCKDB_PATH = os.getenv("DUCKDB_PATH", "../data/market/mempool_data.duckdb")
 
 # --- CONFIGURACIÓN DE PÁGINA (ESTÉTICA DARK) ---
 st.set_page_config(

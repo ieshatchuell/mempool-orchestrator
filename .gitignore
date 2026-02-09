@@ -12,6 +12,7 @@ wheels/
 # Environment variables
 .env
 
-# Database files
-*.duckdb
+# Database files (separated by permission type)
+data/market/*.duckdb
+data/history/*.duckdb
 .DS_Store

@@ -23,7 +23,7 @@ class TestSettingsDefaults:
         assert settings.kafka_bootstrap_servers == "localhost:9092"
         assert settings.mempool_topic == "mempool-raw"
         assert settings.mempool_ws_url == "wss://mempool.space/api/v1/ws"
-        assert settings.duckdb_path == "mempool_data.duckdb"
+        assert settings.duckdb_path == "../data/market/mempool_data.duckdb"
         assert settings.duckdb_batch_size == 50
 
     def test_settings_types_are_correct(self):

@@ -54,9 +54,30 @@ KAFKA_BOOTSTRAP_SERVERS=localhost:9092
 MEMPOOL_TOPIC=mempool-raw
 MEMPOOL_WS_URL=wss://mempool.space/api/v1/ws
 MEMPOOL_API_URL=https://mempool.space/api
-DUCKDB_PATH=mempool_data.duckdb
+DUCKDB_PATH=data/market/mempool_data.duckdb
 DUCKDB_BATCH_SIZE=50
-AGENT_HISTORY_PATH=agent_history.duckdb
+AGENT_HISTORY_PATH=data/history/agent_history.duckdb
+```
+
+### Project Structure
+```text
+├── backend/       # Data Engineering (Python, Kafka, DuckDB)
+├── frontend/      # UI (Streamlit, Plotly)
+├── data/          # State Storage
+│   ├── market/    # Read-Only (Mempool data)
+│   └── history/   # Read-Write (Agent decisions)
+├── infra/         # Docker & Redpanda
+└── scripts/       # Utilities
+```
+
+### Installation
+```bash
+# Sync all dependencies (recommended)
+just sync
+
+# Or sync individually
+cd backend && uv sync
+cd frontend && uv sync
 ```
 
 ### Commands
@@ -178,14 +199,14 @@ The system uses **strongly-typed tables** with Pydantic validation:
 
 **From Terminal (Read-Only):**
 ```bash
-# Query mempool stats
-uv run python -c "import duckdb; conn = duckdb.connect('mempool_data.duckdb', read_only=True); print(conn.execute('SELECT * FROM mempool_stats ORDER BY ingestion_time DESC LIMIT 10').df())"
+# Query mempool stats (from project root)
+uv run python -c "import duckdb; conn = duckdb.connect('data/market/mempool_data.duckdb', read_only=True); print(conn.execute('SELECT * FROM mempool_stats ORDER BY ingestion_time DESC LIMIT 10').df())"
 
 # Query projected blocks (most recent snapshot)
-uv run python -c "import duckdb; conn = duckdb.connect('mempool_data.duckdb', read_only=True); print(conn.execute('SELECT ingestion_time, block_index, n_tx, total_fees, median_fee, fee_range FROM projected_blocks WHERE ingestion_time = (SELECT MAX(ingestion_time) FROM projected_blocks) ORDER BY block_index').df())"
+uv run python -c "import duckdb; conn = duckdb.connect('data/market/mempool_data.duckdb', read_only=True); print(conn.execute('SELECT ingestion_time, block_index, n_tx, total_fees, median_fee, fee_range FROM projected_blocks WHERE ingestion_time = (SELECT MAX(ingestion_time) FROM projected_blocks) ORDER BY block_index').df())"
 
 # Audit data quality (verify block_index ordering and fee_range structure)
-uv run python -c "import duckdb; conn = duckdb.connect('mempool_data.duckdb', read_only=True); print(conn.execute('SELECT ingestion_time, block_index, total_fees, fee_range FROM projected_blocks ORDER BY ingestion_time DESC LIMIT 5').df())"
+uv run python -c "import duckdb; conn = duckdb.connect('data/market/mempool_data.duckdb', read_only=True); print(conn.execute('SELECT ingestion_time, block_index, total_fees, fee_range FROM projected_blocks ORDER BY ingestion_time DESC LIMIT 5').df())"
 ```
 
 **From Dashboard:**
@@ -201,8 +222,8 @@ The project maintains comprehensive test coverage with strict mocking:
 # Run all tests
 just test
 
-# Run specific test suite
-uv run pytest tests/test_api.py -v
+# Run specific test suite (from backend directory)
+cd backend && uv run pytest tests/test_api.py -v
 ```
 
 **Test Coverage:**
