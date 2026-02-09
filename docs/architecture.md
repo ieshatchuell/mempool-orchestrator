@@ -1,7 +1,7 @@
 # System Architecture
 
 ## 1. High-Level Data Flow (V5)
-The system follows a **Hybrid Architecture** combining local processes for speed with containerized AI for isolation.
+The system follows a **Decoupled Monorepo** pattern combining local processes for speed with containerized AI for isolation. The Frontend (Streamlit) is physically separated from the Backend (Data Engineering) to enable future migration to React without breaking pipelines.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -10,27 +10,31 @@ The system follows a **Hybrid Architecture** combining local processes for speed
 │  [External WebSocket: mempool.space]                            │
 │        │                                                        │
 │        v (Async Streaming - "Radar")                            │
-│  [Ingestor: src.ingestors.mempool_ws]                          │
+│  [Ingestor: backend/src/ingestors/mempool_ws]                   │
 │        │                                                        │
 │        v (Internal Library)                                     │
-│  [Producer: src.common.kafka_producer]                         │
+│  [Producer: backend/src/common/kafka_producer]                  │
 │        │                                                        │
 │        v (Kafka Protocol)                                       │
-│  ┌─────────────────┐    ┌──────────────────────────────────┐   │
-│  │ Redpanda        │    │ mempool_data.duckdb              │   │
-│  │ (Docker)        │───▶│ (Write Lock: Local Process)      │   │
-│  └─────────────────┘    └────────────┬─────────────────────┘   │
+│  ┌─────────────────┐    ┌──────────────────────────────────┐    │
+│  │ Redpanda        │    │ data/market/mempool_data.duckdb  │    │
+│  │ (Docker)        │───▶│ (Write Lock: Local Process)      │    │
+│  └─────────────────┘    └────────────┬─────────────────────┘    │
 │                                      │                          │
 └──────────────────────────────────────│──────────────────────────┘
                                        │ :ro volume mount
 ┌──────────────────────────────────────│──────────────────────────┐
 │                     DOCKER NETWORK   │                          │
 │                                      v                          │
-│  ┌─────────────────┐    ┌──────────────────────────────────┐   │
-│  │ Ollama          │◀───│ Orchestrator                     │   │
-│  │ (Llama 3.2)     │    │ (Read-Only DuckDB Access)        │   │
-│  └─────────────────┘    └──────────────────────────────────┘   │
-│                                                                 │
+│  ┌─────────────────┐    ┌──────────────────────────────────┐    │
+│  │ Ollama          │◀───│ Orchestrator                     │    │
+│  │ (Llama 3.2)     │    │ (Read-Only DuckDB Access)        │    │
+│  └─────────────────┘    └──────────────────────────────────┘    │
+│                                      │                          │
+│                                      v :rw volume mount         │
+│                         ┌──────────────────────────────────┐    │
+│                         │ data/history/agent_history.duckdb│    │
+│                         └──────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -93,9 +97,10 @@ The Radar pattern provides a lightweight, metadata-first approach to ingesting B
 
 ### D. The Dashboard
 - **Purpose:** Real-time observability and data auditing interface.
-- **Implementation:** `dashboard.py`
+- **Implementation:** `frontend/app/main.py`
   - **Framework:** Streamlit for rapid interactive UI development.
-  - **Data Source:** Read-only connection to `mempool_data.duckdb`.
+  - **Data Source:** Read-only connection to `data/market/mempool_data.duckdb`.
+  - **Decoupling:** Fully independent from backend; uses `os.getenv()` for configuration.
   - **Features:**
     - Real-time mempool statistics visualization
     - Projected block analytics
@@ -170,14 +175,16 @@ The AI acts as a **non-critical sidecar**:
   - `duckdb_batch_size`: Batch flush size
   - `agent_history_path`: Agent decision history database
 
-### G. Persistence Layer (Agent Memory)
+### G. Persistence Layer (Strict Data Isolation)
 
-The system implements a **Split Storage Pattern** to avoid file lock conflicts:
+The system implements a **Strict Data Isolation** pattern with physically separated databases:
 
-| Database | Writer | Reader | Mount |
-|----------|--------|--------|-------|
-| `mempool_data.duckdb` | Storage Service (Local) | Orchestrator (Docker) | `:ro` |
-| `agent_history.duckdb` | Orchestrator (Docker) | Auditing/Backtest | `:rw` |
+| Database | Path | Writer | Reader | Mount |
+|----------|------|--------|--------|-------|
+| Market Data | `data/market/mempool_data.duckdb` | Storage Service (Local) | Orchestrator (Docker) | `:ro` |
+| Agent Memory | `data/history/agent_history.duckdb` | Orchestrator (Docker) | Auditing/Backtest | `:rw` |
+
+> **Key Insight:** Separating RO and RW data into distinct directories enables strict Docker volume permissions. The `market/` folder is mounted read-only, while `history/` is mounted read-write.
 
 **Schema (`decision_history` table):**
 - `timestamp`: TIMESTAMP (UTC)

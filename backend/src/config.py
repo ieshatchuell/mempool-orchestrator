@@ -17,11 +17,11 @@ class Settings(BaseSettings):
     mempool_api_url: str = "https://mempool.space/api"
 
     # Storage - DuckDB
-    duckdb_path: str = "mempool_data.duckdb"
+    duckdb_path: str = "../data/market/mempool_data.duckdb"
     duckdb_batch_size: int = 50  # Messages before commit
 
     # Agent History - Separate DB to avoid file lock conflicts
-    agent_history_path: str = "agent_history.duckdb"
+    agent_history_path: str = "../data/history/agent_history.duckdb"
 
     model_config = SettingsConfigDict(
         env_file=".env", 

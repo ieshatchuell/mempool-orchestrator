@@ -613,7 +613,106 @@ volumes:
 2. Two database files to manage for backup/migration.
 
 ### Related Files
-- [agent_history.py](../src/storage/agent_history.py)
-- [config.py](../src/config.py)
-- [docker-compose.yml](../infra/docker-compose.yml)
+- [agent_history.py](backend/src/storage/agent_history.py)
+- [config.py](backend/src/config.py)
+- [docker-compose.yml](infra/docker-compose.yml)
 
+---
+
+## ADR-007: Decoupled Monorepo & Strict Data Isolation
+**Date:** 2026-02-09  
+**Status:** ✅ IMPLEMENTED  
+**Phase:** Phase 3 - Infrastructure Maturity
+
+### Context
+
+The project grew from a flat file structure to a complex system with multiple concerns:
+
+1. **Flat Structure Problems:**
+   - Source code (`src/`), tests (`tests/`), scripts (`debug_db.py`), and UI (`dashboard.py`) all mixed at root level.
+   - `pyproject.toml` contained both backend (Kafka, DuckDB) and frontend (Streamlit) dependencies.
+   - Made it difficult to scale or migrate UI to React without affecting data pipelines.
+
+2. **Docker Permission Conflicts:**
+   - Both `mempool_data.duckdb` (RO) and `agent_history.duckdb` (RW) lived in the same `data/` folder.
+   - Mounting the entire folder as `:ro` broke agent history writes; mounting as `:rw` violated security principles.
+   - WAL file creation required write access to the parent directory.
+
+### Decision
+
+**1. Adopt Decoupled Monorepo Pattern:**
+
+Split the project into independent workspaces:
+```
+├── backend/       # Data Engineering (Python, Kafka, DuckDB)
+├── frontend/      # UI (Streamlit, Plotly)
+├── data/          # State Storage
+├── infra/         # Docker & Redpanda
+└── scripts/       # Utilities
+```
+
+Each workspace has its own `pyproject.toml` and `uv.lock`.
+
+**2. Enforce Strict Data Isolation:**
+
+Physically separate read-only and read-write data:
+```
+data/
+├── market/        # Read-Only (mounted :ro in Docker)
+│   └── mempool_data.duckdb
+└── history/       # Read-Write (mounted :rw in Docker)
+    └── agent_history.duckdb
+```
+
+**3. Docker Volume Strategy:**
+```yaml
+volumes:
+  - ../data/market:/app/data/market:ro    # Input: RO
+  - ../data/history:/app/data/history:rw  # Output: RW
+```
+
+### Implementation
+
+**Files Created/Modified:**
+- `frontend/pyproject.toml` (NEW): Streamlit, Plotly, Pandas dependencies
+- `frontend/app/main.py`: Refactored from `dashboard.py`, uses `os.getenv()` for configuration
+- `backend/pyproject.toml`: Moved from root, backend-only dependencies
+- `Justfile`: Rewritten with `cd backend/` and `cd frontend/` context switching
+- `infra/docker-compose.yml`: Separate RO/RW volume mounts
+
+**Updated Paths:**
+- `config.py`: `duckdb_path = "../data/market/mempool_data.duckdb"`
+- `config.py`: `agent_history_path = "../data/history/agent_history.duckdb"`
+
+### Consequences
+
+**Positive:**
+1. **Clear Separation of Concerns:** Backend and Frontend can evolve independently.
+2. **Future-Proof:** Easy path to React migration without touching data pipelines.
+3. **Strict Docker Security:** Read-only data cannot be accidentally modified by containers.
+4. **WAL File Isolation:** Write-ahead logs for `agent_history.duckdb` contained in their own directory.
+5. **Simpler Dependency Management:** No version conflicts between Streamlit and backend packages.
+
+**Trade-offs:**
+1. **Slightly More Complex Commands:** Must `cd` into workspace or use `just` recipes.
+2. **Two Lock Files:** `backend/uv.lock` and `frontend/uv.lock` managed separately.
+3. **Path Awareness:** Developers must understand relative paths differ between local and Docker execution.
+
+### Verification
+
+```bash
+# Sync both workspaces
+just sync
+
+# Run backend tests
+just test  # 55 passed
+
+# Launch dashboard
+just dashboard  # Streamlit UI on localhost:8501
+```
+
+### Related Files
+- [Justfile](Justfile)
+- [docker-compose.yml](infra/docker-compose.yml)
+- [frontend/pyproject.toml](frontend/pyproject.toml)
+- [backend/pyproject.toml](backend/pyproject.toml)

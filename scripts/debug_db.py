@@ -1,7 +1,7 @@
 import duckdb
 import os
 
-DB_PATH = "mempool_data.duckdb"
+DB_PATH = os.path.join(os.path.dirname(__file__), "../data/market/mempool_data.duckdb")
 
 print(f"🔍 Conectando a: {DB_PATH} ...")
 
