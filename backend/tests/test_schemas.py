@@ -35,7 +35,7 @@ class TestMempoolStats:
         assert stats.mempool_info.size == 150000
         assert stats.mempool_info.bytes == 75000000
         assert stats.mempool_info.usage == 250000000
-        assert stats.mempool_info.total_fee == 1.5
+        assert stats.mempool_info.total_fee == 150_000_000  # 1.5 BTC → Satoshis
         assert stats.mempool_info.mempool_min_fee == 0.00001
         assert stats.mempool_info.min_relay_tx_fee == 0.00001
 
@@ -53,7 +53,7 @@ class TestMempoolStats:
         
         assert stats.mempool_info.size == 100000
         assert stats.mempool_info.bytes == 50000000
-        assert stats.mempool_info.total_fee == 2.0
+        assert stats.mempool_info.total_fee == 200_000_000  # 2.0 BTC → Satoshis
         assert stats.mempool_info.usage is None
         assert stats.mempool_info.mempool_min_fee is None
         assert stats.mempool_info.min_relay_tx_fee is None
@@ -172,7 +172,7 @@ class TestAliasMapping:
         }
         
         info = MempoolInfo.model_validate(data_snake)
-        assert info.total_fee == 2.0
+        assert info.total_fee == 200_000_000  # 2.0 BTC → Satoshis
         
         # Test with camelCase input (default from API)
         data_camel = {
@@ -182,7 +182,28 @@ class TestAliasMapping:
         }
         
         info_camel = MempoolInfo.model_validate(data_camel)
-        assert info_camel.total_fee == 3.0
+        assert info_camel.total_fee == 300_000_000  # 3.0 BTC → Satoshis
+
+    def test_total_fee_btc_to_satoshis_conversion(self):
+        """Verify total_fee is converted from BTC float to Satoshis integer at ingestion."""
+        data = {
+            "size": 100000,
+            "bytes": 50000000,
+            "totalFee": 0.29999999,  # Edge case: float precision
+        }
+        info = MempoolInfo.model_validate(data)
+        assert isinstance(info.total_fee, int)
+        assert info.total_fee == 29999999  # round(0.29999999 * 1e8) = 29999999
+
+    def test_total_fee_accepts_integer_directly(self):
+        """Verify total_fee accepts pre-converted Satoshi integers."""
+        data = {
+            "size": 100000,
+            "bytes": 50000000,
+            "total_fee": 150_000_000,  # Already Satoshis
+        }
+        info = MempoolInfo.model_validate(data)
+        assert info.total_fee == 150_000_000
 
     def test_mempool_block_serialization_to_camel(self):
         """Verify model serialization converts back to camelCase for API compatibility."""

@@ -716,3 +716,66 @@ just dashboard  # Streamlit UI on localhost:8501
 - [docker-compose.yml](infra/docker-compose.yml)
 - [frontend/pyproject.toml](frontend/pyproject.toml)
 - [backend/pyproject.toml](backend/pyproject.toml)
+
+---
+
+## ADR-007: Audit Hardening — Schema Fix, Test Repair, and Persistence Optimization
+
+- **Date:** 2026-02-11
+- **Status:** Accepted
+- **Triggered by:** Independent project audit (Claude Opus 4.6)
+
+### Context
+
+A comprehensive audit of the codebase revealed four issues requiring immediate attention:
+
+1. **9 failing API tests** in `test_api.py` after the monorepo refactor (ADR-006). Tests mocked URLs at `/api/v1/block/...` but `config.py` defines `mempool_api_url` as `https://mempool.space/api` (without `/v1`).
+2. **`total_fee` defined as `float`** in `MempoolInfo` (BTC from API), with manual conversion to Satoshis deep in `duckdb_consumer.py`. This violated our own principle: *"Monetary values are strictly int (Satoshis)"*.
+3. **`DROP TABLE IF EXISTS projected_blocks`** executed on every consumer restart, silently destroying historical data.
+4. **Per-call DuckDB connections** in `AgentHistory.save_decision()`, opening and closing a connection for every decision (every 60s).
+
+### Decision
+
+**P1 — Fix API test URLs:**
+- Replace all `/api/v1/` references in `test_api.py` with `/api/` to match the real mempool.space API format.
+- No changes to production code.
+
+**P2 — Convert `total_fee` to Satoshis at the schema boundary:**
+- Change `MempoolInfo.total_fee` type from `float` to `int`.
+- Add `@field_validator("total_fee", mode="before")` that converts BTC float to Satoshis integer using `int(round(v * 100_000_000))`.
+- Remove the manual conversion in `duckdb_consumer.py`.
+
+**P3 — Replace `DROP TABLE` with `CREATE TABLE IF NOT EXISTS`:**
+- Use the same idempotent pattern already used for `mempool_stats`.
+
+**P4 — Persistent DuckDB connection in `AgentHistory`:**
+- Open a single connection in `__init__` and reuse it across all `save_decision()` calls.
+- Add `close()` method for explicit cleanup on shutdown.
+- Safe because `agent_history.duckdb` has a single writer (the orchestrator).
+
+### Consequences
+
+**Positive:**
+1. **66 tests passing** (up from 55 passing + 9 failing).
+2. **IEEE 754 safety:** `total_fee` conversion uses `round()` before `int()` to prevent truncation errors (e.g., `0.29999...` → `30000000` instead of `29999999`).
+3. **Data preservation:** `projected_blocks` data survives consumer restarts, enabling backtesting.
+4. **Reduced I/O:** One persistent connection instead of open/close per decision cycle.
+
+**Trade-offs:**
+1. **Schema migration needed:** Existing tests relying on `total_fee` as float had to be updated.
+2. **Connection lifecycle awareness:** Consumers of `AgentHistory` must call `close()` on shutdown.
+
+### Verification
+
+```bash
+cd backend && uv run pytest -v  # 66 passed, 0 failed (0.32s)
+```
+
+### Related Files
+- [schemas.py](backend/src/schemas.py)
+- [duckdb_consumer.py](backend/src/storage/duckdb_consumer.py)
+- [agent_history.py](backend/src/storage/agent_history.py)
+- [test_api.py](backend/tests/test_api.py)
+- [test_schemas.py](backend/tests/test_schemas.py)
+- [test_agent_history.py](backend/tests/test_agent_history.py)
+
