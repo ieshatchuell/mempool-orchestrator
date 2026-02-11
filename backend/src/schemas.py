@@ -147,9 +147,22 @@ class MempoolInfo(BaseModel):
     size: int = Field(..., description="Number of transactions in mempool")
     bytes: int = Field(..., description="Total size in bytes")
     usage: Optional[int] = Field(None, description="Memory usage")
-    total_fee: float = Field(..., description="Total fees")
+    total_fee: int = Field(..., description="Total fees in Satoshis")
     mempool_min_fee: Optional[float] = Field(None, description="Minimum fee rate")
     min_relay_tx_fee: Optional[float] = Field(None, description="Minimum relay fee rate")
+
+    @field_validator("total_fee", mode="before")
+    @classmethod
+    def convert_btc_to_satoshis(cls, v: float | int) -> int:
+        """Convert BTC float from API to Satoshis integer.
+
+        The mempool.space API returns total_fee as BTC (float).
+        We convert at the boundary to avoid IEEE 754 precision errors downstream.
+        Uses round() before int() to prevent truncation (e.g. 0.29999... → 30000000).
+        """
+        if isinstance(v, float):
+            return int(round(v * 100_000_000))
+        return v
 
 
 class MempoolStats(BaseModel):

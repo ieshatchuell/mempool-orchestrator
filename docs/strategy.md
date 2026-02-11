@@ -24,7 +24,7 @@ The project addresses the auction market for Bitcoin block space.
 - **Data Isolation:** Strict RO/RW separation with Docker volume permissions.
 
 ### Phase 2: Financial Hardening & Validation — 🔄 Q1 2026
-- **[Critical] Schema Fix:** Refactor `float` to `int` (Satoshis) in all Pydantic models to prevent floating-point precision errors in financial computations.
+- ~~**[Critical] Schema Fix:** Refactor `float` to `int` (Satoshis) in all Pydantic models~~ ✅ Done (ADR-007)
 - **[Analytics] Scientific Backtesting:**
     - **Metric:** Slippage / Opportunity Cost (Did we save sats vs the market?).
     - **Baseline:** Compare our "20% Premium" strategy against Simple Moving Averages (SMA/EMA). We must beat the index.
