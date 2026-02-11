@@ -20,7 +20,7 @@ class TestMempoolAPIInitialization:
         api = MempoolAPI()
         
         # Should use the default from settings
-        assert api.base_url == "https://mempool.space/api/v1"
+        assert api.base_url == "https://mempool.space/api"
 
     @patch('src.ingestors.mempool_api.settings')
     def test_api_respects_custom_base_url(self, mock_settings):
@@ -68,7 +68,7 @@ class TestGetBlockStats:
         }
         
         # Mock the HTTP request
-        respx.get("https://mempool.space/api/v1/block/00000000000000000001c1c2f8f3d5e4").mock(
+        respx.get("https://mempool.space/api/block/00000000000000000001c1c2f8f3d5e4").mock(
             return_value=httpx.Response(200, json=mock_block_data)
         )
         
@@ -84,7 +84,7 @@ class TestGetBlockStats:
     async def test_block_not_found_404(self):
         """Verify 404 raises MempoolAPIError."""
         # Mock 404 response
-        respx.get("https://mempool.space/api/v1/block/invalid_hash").mock(
+        respx.get("https://mempool.space/api/block/invalid_hash").mock(
             return_value=httpx.Response(404)
         )
         
@@ -100,7 +100,7 @@ class TestGetBlockStats:
     async def test_server_error_500(self):
         """Verify 500 raises MempoolAPIError."""
         # Mock 500 response
-        respx.get("https://mempool.space/api/v1/block/some_hash").mock(
+        respx.get("https://mempool.space/api/block/some_hash").mock(
             return_value=httpx.Response(500)
         )
         
@@ -116,7 +116,7 @@ class TestGetBlockStats:
     async def test_client_error_400(self):
         """Verify 4xx errors raise MempoolAPIError."""
         # Mock 400 response
-        respx.get("https://mempool.space/api/v1/block/bad_request").mock(
+        respx.get("https://mempool.space/api/block/bad_request").mock(
             return_value=httpx.Response(400)
         )
         
@@ -132,7 +132,7 @@ class TestGetBlockStats:
     async def test_network_timeout_error(self):
         """Verify network errors raise MempoolAPIError."""
         # Mock network timeout
-        respx.get("https://mempool.space/api/v1/block/timeout_test").mock(
+        respx.get("https://mempool.space/api/block/timeout_test").mock(
             side_effect=httpx.RequestError("Connection timeout")
         )
         
@@ -147,7 +147,7 @@ class TestGetBlockStats:
     async def test_invalid_json_response(self):
         """Verify invalid JSON raises MempoolAPIError."""
         # Mock response with invalid JSON
-        respx.get("https://mempool.space/api/v1/block/bad_json").mock(
+        respx.get("https://mempool.space/api/block/bad_json").mock(
             return_value=httpx.Response(200, text="Not valid JSON {]")
         )
         
@@ -177,10 +177,10 @@ class TestIntegrationScenarios:
     async def test_multiple_requests_in_same_session(self):
         """Verify multiple requests can be made in the same session."""
         # Mock two different blocks
-        respx.get("https://mempool.space/api/v1/block/hash1").mock(
+        respx.get("https://mempool.space/api/block/hash1").mock(
             return_value=httpx.Response(200, json={"height": 1})
         )
-        respx.get("https://mempool.space/api/v1/block/hash2").mock(
+        respx.get("https://mempool.space/api/block/hash2").mock(
             return_value=httpx.Response(200, json={"height": 2})
         )
         
@@ -196,10 +196,10 @@ class TestIntegrationScenarios:
     async def test_error_doesnt_crash_session(self):
         """Verify one failed request doesn't prevent subsequent requests."""
         # First request fails, second succeeds
-        respx.get("https://mempool.space/api/v1/block/fail").mock(
+        respx.get("https://mempool.space/api/block/fail").mock(
             return_value=httpx.Response(404)
         )
-        respx.get("https://mempool.space/api/v1/block/success").mock(
+        respx.get("https://mempool.space/api/block/success").mock(
             return_value=httpx.Response(200, json={"height": 100})
         )
         
