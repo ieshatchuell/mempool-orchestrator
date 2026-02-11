@@ -18,58 +18,35 @@ The project addresses the auction market for Bitcoin block space.
 
 ## 4. Phased Roadmap (2026)
 
-### Q1: The Backbone (Infrastructure & Ingestion) - [COMPLETED]
-- **Technical Goal:** Deploy a resilient pipeline (Redpanda + Python/uv + DuckDB).
-- **Business Goal:** Achieve "Full Observability" via structured Medallion layers (Bronze/Silver).
-- **Status:** 
-  - ✅ Ingestion pipeline (WebSocket + REST API)
-  - ✅ Typed storage layer with Pydantic validation
-  - ✅ Data quality hardening (schema relaxation for API compatibility)
-  - ✅ Analytics dashboard for real-time observability
-  - ✅ Storage schema evolution (`block_index` ordering, `fee_range` arrays)
+### Phase 1: Foundation — ✅ COMPLETED
+- **Architecture:** Decoupled Monorepo & Hybrid Infrastructure (Local + Docker).
+- **AI Strategy:** Neuro-Symbolic Brain (Python Logic + Llama 3.2 Narrative).
+- **Data Isolation:** Strict RO/RW separation with Docker volume permissions.
 
-### Q1.5: The Agentic Brain (Infrastructure) - [COMPLETED]
-- **Technical Goal:** Deploy local LLM infrastructure (Ollama + Llama 3.2) and AI Orchestrator service.
-- **Business Goal:** Enable AI-driven analysis of mempool data with structured reasoning.
-- **Status:**
-  - ✅ Ollama service in Docker with model persistence
-  - ✅ AI Orchestrator with read-only DuckDB access
-  - ✅ Hybrid architecture (local writer + containerized reader)
-  - ✅ PydanticAI integration for agentic workflows
-  - ✅ **PIVOTED:** Neuro-Symbolic Architecture (see below)
+### Phase 2: Financial Hardening & Validation — 🔄 Q1 2026
+- **[Critical] Schema Fix:** Refactor `float` to `int` (Satoshis) in all Pydantic models to prevent floating-point precision errors in financial computations.
+- **[Analytics] Scientific Backtesting:**
+    - **Metric:** Slippage / Opportunity Cost (Did we save sats vs the market?).
+    - **Baseline:** Compare our "20% Premium" strategy against Simple Moving Averages (SMA/EMA). We must beat the index.
+- **[Data] Lookback Strategy:** Ingest last 144 blocks (~24h) via REST API on boot.
+    - **Impact:** ~7MB disk, ~5s boot time. Non-destructive (backfill only).
 
-### Q1.6: Neuro-Symbolic AI Pivot - [COMPLETED]
-- **Technical Goal:** Refactor Orchestrator from "Pure LLM Agent" to "Safe-Guarded Hybrid".
-- **Business Goal:** Achieve 100% reliability and sub-second decision latency.
-- **Status:**
-  - ✅ Python logic layer for deterministic decisions (Layer 1)
-  - ✅ LLM narrative layer for human-readable reasoning (Layer 2)
-  - ✅ Performance: ~40s → ~1.3s (~30x improvement)
-  - ✅ Graceful degradation when AI is unavailable
+### Phase 3: The Prescriptive Operator — 🛠️ Q2 2026
+- **Concept:** Move from Descriptive/Predictive to **Prescriptive Analytics**.
+- **[Feature] Watchlist Module:** Allow tracking specific TXIDs (without wallet connection).
+- **[Feature] RBF Advisor (Sender Strategy):** Alert if a tracked tx is stuck and calculate optimal replacement fee.
+- **[Feature] CPFP Advisor (Receiver Strategy):** Alert if an incoming payment is stuck and calculate child-fee to unstick it.
+- **[Feature] Dust Watch:** Alert when fees dip below 5 sats/vB for UTXO consolidation windows.
 
-#### Strategy Rules (Deterministic - Python)
+### Phase 4: Scalability & UX — ☁️ Q3 2026
+- **[UI]** Migrate Streamlit to React/Next.js for complex interactivity.
+- **[Decision] YAGNI:** No Repository Pattern and no Cloud LLM for now. Local DuckDB + Local Ollama is sufficient for the current scale.
 
-The decision strategy is now **code**, not prompts:
-
-| Condition | Action | Target Fee |
-|-----------|--------|------------|
-| `fee_premium_pct > 20%` | **WAIT** | Historical Median Fee |
-| `fee_premium_pct <= 20%` | **BROADCAST** | Current Median Fee |
-
-> **Key Insight:** The LLM never makes decisions. It only explains why the Python-computed decision makes sense.
-
-### Q2: The Memory (Modeling & Intelligence)
-- **Technical Goal:** Advanced transaction parsing and historical trend analysis.
-- **Business Goal:** Identify fee-saving patterns and whale movement detection.
-- **Status:**
-  - ✅ Persistence & Decision Logging (Split Storage Pattern)
-  - ⏳ Auditing & Backtesting
-  - ⏳ Historical trend analysis
-
-### Q3: Advanced Orchestration
-- **Technical Goal:** Multi-strategy support, RBF/CPFP automation.
-- **Business Goal:** Transition from "Observer" to active "Treasury Operator".
+### Phase 5: True Sovereignty — 🦁 Q4 2026 (Endgame)
+- **[Infra]** Deploy Bitcoin Core Node (Pruned Mode, `prune=550`) in Docker.
+- **[Backend]** Switch Ingestor from mempool.space API to Local RPC (`getblocktemplate`).
+- **Goal:** Eliminate the "Black Box" dependency. Validate fees ourselves in a trustless way.
 
 ---
 **Lead Engineer:** Israel (@ieshatchuell)
-**Status:** Phase 2.5 Neuro-Symbolic Pivot Complete.
+**Status:** Phase 2 Planning.
