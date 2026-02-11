@@ -195,6 +195,8 @@ The system implements a **Strict Data Isolation** pattern with physically separa
 - `ai_reasoning`: VARCHAR (LLM explanation)
 - `model_version`: VARCHAR (e.g., "neuro-symbolic-v1")
 
+> **Connection Strategy:** `AgentHistory` keeps a persistent DuckDB connection (opened once in `__init__`, closed explicitly via `close()`). This is safe because the orchestrator is the sole writer to this file.
+
 ## 3. Package Structure Standards
 - `src.common`: Shared infrastructure clients.
 - `src.ingestors`: External data source connectors (WebSocket + REST API).
@@ -215,7 +217,9 @@ The system implements a **Strict Data Isolation** pattern with physically separa
     - `tests/test_ingestor.py`: Routing logic and error handling.
     - `tests/test_kafka_producer.py`: Infrastructure wrapper behavior.
     - `tests/test_config.py`: Environment variable loading and validation.
-    - `tests/test_api.py`: REST API client behavior (55 total tests).
+    - `tests/test_api.py`: REST API client behavior.
+    - `tests/test_agent_history.py`: Agent decision persistence.
+    - *66 total tests.*
 
 ## 5. Architectural Patterns
 

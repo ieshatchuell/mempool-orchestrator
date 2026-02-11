@@ -22,7 +22,8 @@ class TestAgentHistoryInit:
         db_path = str(tmp_path / "test_agent.duckdb")
         
         # Initialize AgentHistory (should create table)
-        AgentHistory(db_path=db_path)
+        history = AgentHistory(db_path=db_path)
+        history.close()
         
         # Verify table exists
         conn = duckdb.connect(db_path, read_only=True)
@@ -42,7 +43,8 @@ class TestAgentHistoryInit:
         """Verify that the decision_history table has the correct columns."""
         db_path = str(tmp_path / "test_schema.duckdb")
         
-        AgentHistory(db_path=db_path)
+        history = AgentHistory(db_path=db_path)
+        history.close()
         
         conn = duckdb.connect(db_path, read_only=True)
         try:
@@ -95,6 +97,9 @@ class TestAgentHistorySave:
         
         # Save the record
         history.save_decision(record)
+        
+        # Close persistent connection before read-only verification
+        history.close()
         
         # Retrieve and verify
         conn = duckdb.connect(db_path, read_only=True)
@@ -150,6 +155,9 @@ class TestAgentHistorySave:
         
         history.save_decision(record1)
         history.save_decision(record2)
+        
+        # Close persistent connection before read-only verification
+        history.close()
         
         # Verify count
         conn = duckdb.connect(db_path, read_only=True)

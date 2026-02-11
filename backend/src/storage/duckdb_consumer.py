@@ -44,11 +44,9 @@ class DuckDBConsumer:
             )
         """)
         
-        # Projected Blocks Table - Schema Evolution Strategy
-        # Drop and recreate during development to ensure schema matches real WebSocket payload
-        self.db_conn.execute("DROP TABLE IF EXISTS projected_blocks")
+        # Projected Blocks Table
         self.db_conn.execute("""
-            CREATE TABLE projected_blocks (
+            CREATE TABLE IF NOT EXISTS projected_blocks (
                 ingestion_time TIMESTAMP NOT NULL,
                 block_index UTINYINT NOT NULL,
                 block_size UINTEGER NOT NULL,
@@ -114,7 +112,7 @@ class DuckDBConsumer:
                     ingestion_time,
                     info.size,
                     info.bytes,
-                    int(info.total_fee * 100_000_000),  # Convert BTC to Satoshis
+                    info.total_fee,  # Already Satoshis (int) via schema validator
                     info.mempool_min_fee or 0.0
                 )
                 self.buffer.append(('stats', record))
