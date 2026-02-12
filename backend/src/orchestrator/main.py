@@ -77,10 +77,10 @@ def evaluate_market_rules(ctx: MempoolContext) -> MarketDecision:
     # Rule 1: Action based on fee premium threshold
     if premium > 20:
         action = "WAIT"
-        recommended_fee = round(ctx.historical_median_fee)
+        recommended_fee = max(1, round(ctx.historical_median_fee))
     else:
         action = "BROADCAST"
-        recommended_fee = round(ctx.current_median_fee)
+        recommended_fee = max(1, round(ctx.current_median_fee))
     
     # Rule 2: Confidence based on premium magnitude
     abs_premium = abs(premium)
