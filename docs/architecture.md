@@ -102,10 +102,10 @@ The Radar pattern provides a lightweight, metadata-first approach to ingesting B
   - **Data Source:** Read-only connection to `data/market/mempool_data.duckdb`.
   - **Decoupling:** Fully independent from backend; uses `os.getenv()` for configuration.
   - **Features:**
-    - Real-time mempool statistics visualization
-    - Projected block analytics
-    - Historical trend analysis
-    - Data quality monitoring
+    - **KPIs:** Mempool size (txs), current median fee (sat/vB), pending fees (BTC), blocks to clear.
+    - **Blocks Table:** Last 10 projected blocks (`block_index=0`) with fees, tx count, and block size.
+    - **Fee Trend Chart:** Historical `median_fee` over ~24h (zero-fee blocks filtered).
+    - **Graceful Degradation:** Shows offline status and guidance when DuckDB is unavailable.
 - **Launch:** `just dashboard`
 
 ### E. The Orchestrator (Neuro-Symbolic Brain)

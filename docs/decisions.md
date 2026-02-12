@@ -779,3 +779,82 @@ cd backend && uv run pytest -v  # 66 passed, 0 failed (0.32s)
 - [test_schemas.py](backend/tests/test_schemas.py)
 - [test_agent_history.py](backend/tests/test_agent_history.py)
 
+---
+
+## ADR-008: Data Quality Hardening — Zero-Fee Filter, MinRelayFee Floor, Backfill & Dashboard
+
+- **Date:** 2026-02-12
+- **Status:** Accepted
+- **Triggered by:** Data Lineage Deep Dive (Session 3)
+
+### Context
+
+A field-by-field data lineage trace from API source to orchestrator decision revealed three data quality issues:
+
+1. **42% of backfilled blocks had `median_fee = 0`** — miner-filled blocks (internal consolidation, pool payouts) where the miner includes their own zero-fee transactions. These distorted the historical baseline from **1.98** to **1.00 sat/vB**, inflating the fee premium from +48% to +194% and causing false WAIT decisions.
+
+2. **`recommended_fee = round(0.14) = 0`** crashed the orchestrator when the mempool was nearly empty. The `AgentDecision` schema correctly enforces `ge=1` (Bitcoin's default `minrelaytxfee` is 1 sat/vB — transactions below this aren't relayed by most nodes), but `evaluate_market_rules()` didn't enforce this floor.
+
+3. **Stale `.env` paths** from the pre-refactor directory structure caused the storage consumer to write to `backend/mempool_data.duckdb` instead of `data/market/mempool_data.duckdb`.
+
+Additionally, the dashboard (`frontend/app/main.py`) used 100% hardcoded mock data and needed to be connected to real DuckDB queries.
+
+### Decisions
+
+**D1 — Filter zero-fee blocks from historical baseline:**
+- Added `AND median_fee > 0` to the historical query in `tools.py`.
+- Only affects the baseline calculation; the current fee query is NOT filtered (a zero-fee "next block" is valid market information).
+
+**D2 — Enforce `minrelaytxfee` floor:**
+- Changed `round(ctx.current_median_fee)` → `max(1, round(ctx.current_median_fee))` in both WAIT and BROADCAST branches of `evaluate_market_rules()`.
+- 1 sat/vB is Bitcoin Core's default minimum relay fee. Below this, nodes reject the transaction.
+
+**D3 — Backfill script (`scripts/backfill_history.py`):**
+- Fetches last 144 confirmed blocks (~24h) from mempool.space REST API with rate-limited pagination.
+- Takes a single mempool snapshot via `/api/mempool`.
+- Inserts into the same `projected_blocks` and `mempool_stats` tables used by the live pipeline.
+
+**D4 — Dashboard connected to real DuckDB data:**
+- Replaced all hardcoded values in `frontend/app/main.py` with read-only DuckDB queries.
+- KPIs: mempool size, median fee, pending fees (BTC), blocks to clear.
+- Table: last 10 projected blocks (`block_index=0`).
+- Chart: historical `median_fee` trend (filtered `> 0`).
+- Added `safe_query` helpers and graceful error handling for database unavailability.
+
+**D5 — Fixed `.env` paths:**
+- Updated `DUCKDB_PATH` from `mempool_data.duckdb` → `../data/market/mempool_data.duckdb`.
+- Updated `AGENT_HISTORY_PATH` from `agent_history.duckdb` → `../data/history/agent_history.duckdb`.
+- `.env` is gitignored (local-only fix).
+
+### Consequences
+
+**Positive:**
+1. Historical baseline reflects real market conditions (1.98 sat/vB, not 1.00).
+2. Orchestrator no longer crashes on low-fee markets.
+3. Full E2E pipeline verified: WebSocket → Kafka → DuckDB → Orchestrator → Dashboard.
+4. Dashboard shows live data instead of mock values.
+
+**Trade-offs:**
+1. The `median_fee > 0` filter reduces the historical sample window when many miner blocks are present.
+2. The `max(1, ...)` floor means our recommendation never drops below 1 sat/vB, even if the market technically allows it for some nodes.
+
+### Verification
+
+```bash
+# E2E Pipeline (all services running simultaneously)
+just infra-up       # Redpanda + Ollama + Orchestrator
+just radar          # WebSocket → Kafka
+just storage        # Kafka → DuckDB
+just ai-logs        # Orchestrator decisions (BROADCAST/WAIT)
+just dashboard      # Streamlit UI on localhost:8501
+
+# Test suite
+cd backend && uv run pytest -v  # 66 passed
+```
+
+### Related Files
+- [tools.py](backend/src/orchestrator/tools.py) — `AND median_fee > 0`
+- [main.py](backend/src/orchestrator/main.py) — `max(1, round(...))`
+- [backfill_history.py](scripts/backfill_history.py) — Backfill script
+- [frontend/main.py](frontend/app/main.py) — Dashboard real data
+- [.env](.env) — Fixed paths (gitignored)
