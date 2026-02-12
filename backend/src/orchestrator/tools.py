@@ -80,6 +80,7 @@ def get_market_context() -> MempoolContext:
                 SELECT median_fee
                 FROM projected_blocks
                 WHERE block_index = 0
+                AND median_fee > 0
                 ORDER BY ingestion_time DESC
                 LIMIT {HISTORICAL_WINDOW_ROWS}
             )
