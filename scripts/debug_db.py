@@ -8,8 +8,8 @@ print(f"🔍 Conectando a: {DB_PATH} ...")
 try:
     conn = duckdb.connect(DB_PATH, read_only=True)
     
-    # 1. VER DATOS (Corregido: quitamos min_fee)
-    print("\n--- 📋 ÚLTIMOS 10 REGISTROS (Next Block) ---")
+    # 1. VER DATOS - mempool_stream (projections)
+    print("\n--- 📋 ÚLTIMOS 10 PROYECCIONES (Next Block) ---")
     conn.sql("""
         SELECT 
             ingestion_time, 
@@ -17,22 +17,21 @@ try:
             median_fee, 
             n_tx,
             total_fees
-        FROM projected_blocks 
+        FROM mempool_stream 
         WHERE block_index = 0 
         ORDER BY ingestion_time DESC 
         LIMIT 10
     """).show()
 
-    # 2. ESTADÍSTICAS (Corregido)
-    print("\n--- 📊 ESTADÍSTICAS DE MEDIAN FEE ---")
+    # 2. ESTADÍSTICAS - block_history (confirmed)
+    print("\n--- 📊 ESTADÍSTICAS DE MEDIAN FEE (Bloques Confirmados) ---")
     conn.sql("""
         SELECT 
             MIN(median_fee) as min_med, 
             MAX(median_fee) as max_med, 
             AVG(median_fee) as avg_med,
             COUNT(*) as total_rows
-        FROM projected_blocks
-        WHERE block_index = 0
+        FROM block_history
     """).show()
 
 except Exception as e:

@@ -1,20 +1,26 @@
 """Database query tools for the AI Orchestrator Agent.
 
 Provides read-only access to DuckDB for mempool market analysis.
+
+Data sources:
+- mempool_stats: Mempool size, bytes, fees (from WebSocket stats)
+- mempool_stream: Speculative projected blocks (from WebSocket mempool-blocks)
+- block_history: Confirmed mined blocks (from backfill + WebSocket block signals)
 """
 
 import os
+from pathlib import Path
 from typing import Literal
 
 import duckdb
 from loguru import logger
 
+from src.config import settings
 from src.orchestrator.schemas import MempoolContext
 
 
-# Configuration from environment
-DUCKDB_PATH = os.getenv("DUCKDB_PATH", "mempool_data.duckdb")
-HISTORICAL_WINDOW_ROWS = 100  # Number of rows for historical median calculation
+# Historical window for baseline calculation
+HISTORICAL_WINDOW_ROWS = 100  # Number of confirmed blocks for historical median
 
 
 def _classify_traffic(mempool_size: int) -> Literal["LOW", "NORMAL", "HIGH"]:
@@ -35,13 +41,19 @@ def _classify_traffic(mempool_size: int) -> Literal["LOW", "NORMAL", "HIGH"]:
 def get_market_context() -> MempoolContext:
     """Query DuckDB for current mempool state and compute market context.
     
+    Data flow:
+    - Current fee: from mempool_stream (latest projected next block)
+    - Baseline fee: from block_history (confirmed blocks, stable)
+    - Mempool stats: from mempool_stats (current mempool state)
+    
     Returns:
         MempoolContext with current and historical fee data.
         
     Raises:
         RuntimeError: If database queries fail or return no data.
     """
-    conn = duckdb.connect(DUCKDB_PATH, read_only=True)
+    db_path = str(Path(settings.duckdb_path).resolve())
+    conn = duckdb.connect(db_path, read_only=True)
     
     try:
         # Get latest mempool stats
@@ -58,10 +70,10 @@ def get_market_context() -> MempoolContext:
         
         mempool_size, mempool_bytes = stats_result
         
-        # Get current median fee (next block, block_index=0)
+        # Get current median fee from mempool_stream (next block projection)
         current_fee_query = """
             SELECT median_fee
-            FROM projected_blocks
+            FROM mempool_stream
             WHERE block_index = 0
             ORDER BY ingestion_time DESC
             LIMIT 1
@@ -69,19 +81,17 @@ def get_market_context() -> MempoolContext:
         current_fee_result = conn.execute(current_fee_query).fetchone()
         
         if not current_fee_result:
-            raise RuntimeError("No projected_blocks data available")
+            raise RuntimeError("No mempool_stream data available")
         
         current_median_fee = current_fee_result[0]
         
-        # Compute historical median over recent window
+        # Compute historical median from block_history (confirmed blocks)
         historical_query = f"""
             SELECT MEDIAN(median_fee) as historical_median
             FROM (
                 SELECT median_fee
-                FROM projected_blocks
-                WHERE block_index = 0
-                AND median_fee > 0
-                ORDER BY ingestion_time DESC
+                FROM block_history
+                ORDER BY height DESC
                 LIMIT {HISTORICAL_WINDOW_ROWS}
             )
         """
@@ -92,7 +102,8 @@ def get_market_context() -> MempoolContext:
             historical_median_fee = current_median_fee
             logger.warning("Insufficient historical data, using current fee as baseline")
         else:
-            historical_median_fee = historical_result[0]
+            # Apply minrelaytxfee floor (1 sat/vB) at read time, not in the query
+            historical_median_fee = max(1.0, historical_result[0])
         
         # Calculate fee premium percentage
         if historical_median_fee > 0:

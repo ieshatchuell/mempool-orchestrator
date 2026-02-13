@@ -74,14 +74,16 @@ The Radar pattern provides a lightweight, metadata-first approach to ingesting B
 1. **Silent Filter:** `conversions` messages are dropped (noise).
 2. **Stats Events:** Key `mempoolInfo` → Validated as `MempoolStats` → Kafka key: `stats`.
 3. **Block Events:** Key `mempool-blocks` → Validated as `List[MempoolBlock]` → Kafka key: `mempool_block`.
-4. **Validation:** Fail-fast strategy. Invalid payloads are logged and dropped to protect downstream storage.
+4. **Confirmed Blocks (Signal & Fetch):** Key `block` → REST fetch `GET /api/v1/block/{hash}` → Validated as `ConfirmedBlock` → Kafka key: `confirmed_block`.
+5. **Validation:** Fail-fast strategy. Invalid payloads are logged and dropped to protect downstream storage.
 
 ### B. Storage Layer (The "Vault")
 - **Engine:** **DuckDB** (In-process OLAP).
 - **Strategy:** Buffered Consumer (batch size: 50) with Pydantic validation.
 - **Schema Strategy (Silver Layer):** Direct write to structured tables (no raw JSON dump).
     - `mempool_stats`: High-frequency metrics (ingestion_time, size, bytes, total_fee, min_fee).
-    - `projected_blocks`: Template data (block_size, n_tx, total_fees, median_fee).
+    - `mempool_stream`: Speculative projected blocks from WebSocket (block_index, block_size, n_tx, total_fees, median_fee).
+    - `block_history`: Confirmed mined blocks (height, block_hash, block_size, n_tx, total_fees, median_fee, pool_name).
 - **Data Types:** Strict mapping. Fees are stored as `UBIGINT` (Satoshis) to prevent floating-point errors.
 
 ### C. The Fetcher (REST Client)
