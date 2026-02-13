@@ -175,3 +175,52 @@ class MempoolStats(BaseModel):
     )
 
     mempool_info: MempoolInfo = Field(..., description="Mempool information")
+
+
+# ============================================================================
+# Confirmed Block Models (REST API + WebSocket)
+# ============================================================================
+
+
+class ConfirmedBlockExtras(BaseModel):
+    """Fee and mining metadata from confirmed blocks.
+    
+    Normalizes both REST API (backfill) and WebSocket (live) sources.
+    All fields have defaults since extras may be partial.
+    """
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+    )
+
+    virtual_size: float = Field(default=0.0, description="Block virtual size in vBytes")
+    total_fees: int = Field(default=0, description="Total fees in Satoshis")
+    median_fee: float = Field(default=0.0, description="Median fee rate in sat/vB")
+    fee_range: List[float] = Field(default_factory=list, description="Fee rate distribution")
+    pool: Optional[dict] = Field(default=None, description="Mining pool info")
+
+
+class ConfirmedBlock(BaseModel):
+    """Confirmed (mined) block from mempool.space.
+    
+    Single model for both sources:
+    - REST API: GET /api/v1/blocks/{startHeight}
+    - WebSocket: block event (signal) + GET /api/v1/block/{hash}
+    """
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+    )
+
+    id: str = Field(..., description="Block hash")
+    height: int = Field(..., description="Block height")
+    timestamp: int = Field(..., description="Block timestamp (unix)")
+    size: int = Field(..., description="Block size in bytes")
+    tx_count: int = Field(..., description="Number of transactions")
+    extras: ConfirmedBlockExtras = Field(
+        default_factory=ConfirmedBlockExtras,
+        description="Fee and mining metadata",
+    )
+

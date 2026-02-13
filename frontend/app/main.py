@@ -16,7 +16,8 @@ DUCKDB_PATH = os.getenv("DUCKDB_PATH", "../data/market/mempool_data.duckdb")
 
 def get_connection() -> duckdb.DuckDBPyConnection:
     """Open a read-only connection to the market DuckDB."""
-    return duckdb.connect(DUCKDB_PATH, read_only=True)
+    db_path = str(Path(DUCKDB_PATH).resolve())
+    return duckdb.connect(db_path, read_only=True)
 
 
 def safe_query(query: str, conn: duckdb.DuckDBPyConnection):
@@ -73,22 +74,22 @@ try:
         ORDER BY ingestion_time DESC LIMIT 1
     """, conn)
 
-    # Current median fee (next block)
+    # Current median fee from mempool_stream (next block projection)
     fee = safe_query("""
         SELECT median_fee
-        FROM projected_blocks
+        FROM mempool_stream
         WHERE block_index = 0
         ORDER BY ingestion_time DESC LIMIT 1
     """, conn)
 
-    # Blocks to clear (distinct block indices in latest snapshot)
+    # Blocks to clear (distinct block indices in latest mempool snapshot)
     blocks_to_clear = safe_query("""
         SELECT COUNT(DISTINCT block_index)
-        FROM projected_blocks
-        WHERE ingestion_time = (SELECT MAX(ingestion_time) FROM projected_blocks)
+        FROM mempool_stream
+        WHERE ingestion_time = (SELECT MAX(ingestion_time) FROM mempool_stream)
     """, conn)
 
-    # Recent blocks table (block_index=0, last 10 unique timestamps)
+    # Recent blocks table from mempool_stream (block_index=0, last 10)
     blocks_df = safe_query_df("""
         SELECT
             ingestion_time AS "Timestamp",
@@ -97,21 +98,19 @@ try:
             total_fees AS "Total Fees (sats)",
             ROUND(median_fee, 2) AS "Median Fee (sat/vB)",
             fee_range AS "Fee Range"
-        FROM projected_blocks
+        FROM mempool_stream
         WHERE block_index = 0
         ORDER BY ingestion_time DESC
         LIMIT 10
     """, conn)
 
-    # Fee trend (last 24h, block_index=0, sampled every ~10 min)
+    # Fee trend from block_history (confirmed blocks, stable trend)
     trend_df = safe_query_df("""
         SELECT
             ingestion_time AS time,
             median_fee AS "Median Fee"
-        FROM projected_blocks
-        WHERE block_index = 0
-        AND median_fee > 0
-        ORDER BY ingestion_time ASC
+        FROM block_history
+        ORDER BY height ASC
     """, conn)
 
     conn.close()
@@ -128,7 +127,7 @@ with col1:
     st.title("⚡ MEMPOOL ORCHESTRATOR_")
     st.caption("Real-time Auditor // Hybrid Signal Architecture")
 with col2:
-    st.markdown("### � LIVE" if data_available else "### 🔴 OFFLINE")
+    st.markdown("### 🟢 LIVE" if data_available else "### 🔴 OFFLINE")
 
 st.divider()
 
@@ -163,7 +162,7 @@ else:
 
 
 # --- ROW 2: RECENT BLOCKS ---
-st.subheader("� RECENT BLOCKS (Next Block Projections)")
+st.subheader("🧊 RECENT BLOCKS (Next Block Projections)")
 
 if data_available and not blocks_df.empty:
     # Format columns for display
@@ -183,7 +182,7 @@ else:
 
 
 # --- ROW 3: FEE TREND CHART ---
-st.subheader("📈 FEE TREND — Median Fee Rate (sat/vB)")
+st.subheader("📈 FEE TREND — Confirmed Block Fees (sat/vB)")
 
 if data_available and not trend_df.empty:
     st.line_chart(
