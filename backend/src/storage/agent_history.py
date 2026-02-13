@@ -54,8 +54,12 @@ class AgentHistory:
         Args:
             db_path: Path to the DuckDB database file. Defaults to settings.agent_history_path.
         """
+        import os
+        from pathlib import Path as _Path
         self._db_path = db_path if db_path is not None else settings.agent_history_path
-        self._conn = duckdb.connect(self._db_path)
+        resolved = _Path(self._db_path).resolve()
+        os.makedirs(resolved.parent, exist_ok=True)
+        self._conn = duckdb.connect(str(resolved))
         self._init_db()
 
     def _init_db(self) -> None:

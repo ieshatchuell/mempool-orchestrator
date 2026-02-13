@@ -2,15 +2,15 @@
 """Backfill ~24h of historical block data into DuckDB.
 
 Fetches the latest 144 confirmed blocks from mempool.space REST API
-and a current mempool snapshot. Inserts data into the same tables
-used by the live WebSocket pipeline, enabling immediate system testing
-without waiting for real-time ingestion.
+and a current mempool snapshot. Writes confirmed blocks to block_history
+and mempool data to mempool_stats.
 
 Usage:
     python scripts/backfill_history.py
 """
 
 import json
+import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,7 +38,21 @@ def init_db(conn: duckdb.DuckDBPyConnection) -> None:
         )
     """)
     conn.execute("""
-        CREATE TABLE IF NOT EXISTS projected_blocks (
+        CREATE TABLE IF NOT EXISTS block_history (
+            ingestion_time TIMESTAMP NOT NULL,
+            height UINTEGER NOT NULL,
+            block_hash VARCHAR NOT NULL,
+            block_size UINTEGER NOT NULL,
+            block_v_size DOUBLE NOT NULL,
+            n_tx UINTEGER NOT NULL,
+            total_fees UBIGINT NOT NULL,
+            median_fee DOUBLE NOT NULL,
+            fee_range JSON NOT NULL,
+            pool_name VARCHAR
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS mempool_stream (
             ingestion_time TIMESTAMP NOT NULL,
             block_index UTINYINT NOT NULL,
             block_size UINTEGER NOT NULL,
@@ -92,7 +106,16 @@ def fetch_mempool_snapshot(client: httpx.Client) -> dict:
 
 
 def insert_blocks(conn: duckdb.DuckDBPyConnection, blocks: list[dict]) -> int:
-    """Insert confirmed blocks into projected_blocks table."""
+    """Insert confirmed blocks into block_history table.
+    
+    Normalizes REST API fields to match the block_history schema:
+    - id → block_hash
+    - extras.medianFee → median_fee
+    - extras.totalFees → total_fees
+    - extras.virtualSize → block_v_size
+    - extras.feeRange → fee_range
+    - extras.pool.name → pool_name
+    """
     rows_inserted = 0
 
     for block in blocks:
@@ -101,20 +124,27 @@ def insert_blocks(conn: duckdb.DuckDBPyConnection, blocks: list[dict]) -> int:
         # Use block timestamp as ingestion_time
         block_time = datetime.fromtimestamp(block["timestamp"], tz=timezone.utc)
 
-        # Map confirmed block fields to projected_blocks schema
+        # Extract pool name safely
+        pool = extras.get("pool")
+        pool_name = pool.get("name") if isinstance(pool, dict) else None
+
         record = (
-            block_time,
-            0,  # block_index: confirmed block = "next block" that was mined
-            block["size"],
-            extras.get("virtualSize", 0.0),
-            block["tx_count"],
-            extras.get("totalFees", 0),     # Already int Satoshis
-            extras.get("medianFee", 0.0),   # sat/vB
-            json.dumps(extras.get("feeRange", [])),
+            block_time,                            # ingestion_time
+            block["height"],                       # height
+            block["id"],                           # block_hash
+            block["size"],                         # block_size
+            extras.get("virtualSize", 0.0),        # block_v_size
+            block["tx_count"],                     # n_tx
+            extras.get("totalFees", 0),            # total_fees (int Satoshis)
+            extras.get("medianFee", 0.0),          # median_fee (sat/vB)
+            json.dumps(extras.get("feeRange", [])),# fee_range
+            pool_name,                             # pool_name
         )
 
         conn.execute(
-            "INSERT INTO projected_blocks VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            """INSERT INTO block_history 
+               (ingestion_time, height, block_hash, block_size, block_v_size, n_tx, total_fees, median_fee, fee_range, pool_name)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             list(record),
         )
         rows_inserted += 1
@@ -163,32 +193,39 @@ def verify_data(conn: duckdb.DuckDBPyConnection) -> None:
         print(f"  {row}")
 
     print("\n" + "=" * 60)
-    print("📊 VERIFICATION: projected_blocks")
+    print("📊 VERIFICATION: block_history")
     print("=" * 60)
 
-    blocks_count = conn.execute("SELECT COUNT(*) FROM projected_blocks").fetchone()[0]
+    blocks_count = conn.execute("SELECT COUNT(*) FROM block_history").fetchone()[0]
     print(f"Total rows: {blocks_count}")
 
     rows = conn.execute(
-        "SELECT ingestion_time, block_index, block_size, n_tx, total_fees, median_fee "
-        "FROM projected_blocks ORDER BY ingestion_time DESC LIMIT 5"
+        "SELECT ingestion_time, height, block_size, n_tx, total_fees, median_fee, pool_name "
+        "FROM block_history ORDER BY height DESC LIMIT 5"
     ).fetchall()
-    columns = ["ingestion_time", "idx", "block_size", "n_tx", "total_fees", "median_fee"]
+    columns = ["ingestion_time", "height", "block_size", "n_tx", "total_fees", "median_fee", "pool"]
     print(f"\n{'  '.join(f'{c:<16}' for c in columns)}")
-    print("-" * 96)
+    print("-" * 112)
     for row in rows:
         print(f"  {row}")
 
     # Show historical median (what the orchestrator would compute)
     hist_median = conn.execute("""
         SELECT MEDIAN(median_fee) FROM (
-            SELECT median_fee FROM projected_blocks
-            WHERE block_index = 0
-            ORDER BY ingestion_time DESC
+            SELECT median_fee FROM block_history
+            ORDER BY height DESC
             LIMIT 100
         )
     """).fetchone()[0]
     print(f"\n🎯 Historical Median Fee (last 100 blocks): {hist_median:.2f} sat/vB")
+
+    # Show zero-fee block count (sanity check)
+    zero_fee_count = conn.execute(
+        "SELECT COUNT(*) FROM block_history WHERE median_fee = 0"
+    ).fetchone()[0]
+    total_count = conn.execute("SELECT COUNT(*) FROM block_history").fetchone()[0]
+    pct = (zero_fee_count / total_count * 100) if total_count > 0 else 0
+    print(f"📉 Zero-fee blocks: {zero_fee_count}/{total_count} ({pct:.0f}%)")
 
 
 def main():
@@ -210,7 +247,7 @@ def main():
             print("📦 Phase 1: Fetching confirmed blocks...")
             blocks = fetch_blocks(client, TARGET_BLOCKS)
             rows = insert_blocks(conn, blocks)
-            print(f"   ✅ Inserted {rows} blocks into projected_blocks\n")
+            print(f"   ✅ Inserted {rows} blocks into block_history\n")
 
             # 2. Fetch and insert mempool snapshot
             print("📦 Phase 2: Fetching mempool snapshot...")

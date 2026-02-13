@@ -858,3 +858,96 @@ cd backend && uv run pytest -v  # 66 passed
 - [backfill_history.py](scripts/backfill_history.py) — Backfill script
 - [frontend/main.py](frontend/app/main.py) — Dashboard real data
 - [.env](.env) — Fixed paths (gitignored)
+
+---
+
+## ADR-009: Data Model Refactoring — Table Separation & Signal-Fetch Pattern
+
+**Date:** 2026-02-13
+**Status:** Accepted
+
+### Context
+
+Session 3 revealed four compounding technical debts:
+
+1. **Statistical Bias:** `AND median_fee > 0` in the historical query filtered out 42% of blocks (miner self-fills), inflating the baseline from 1.00 → 1.98 sat/vB.
+2. **Banker's Rounding:** Python 3's `round(2.5) = 2` could cause fee underpayment, leaving transactions unconfirmed.
+3. **Table Identity Crisis:** `projected_blocks` mixed confirmed blocks (backfill, immutable) with speculative WebSocket projections (~480 rows/min).
+4. **Dead Baseline:** No live ingestion of confirmed blocks meant the historical baseline froze at the 144 backfill blocks.
+
+### Decision
+
+**D1 — Table Separation:**
+- `projected_blocks` → split into two tables:
+  - `mempool_stream`: Speculative projected blocks from WebSocket `mempool-blocks`.
+  - `block_history`: Confirmed mined blocks from backfill + live WebSocket `block` signals.
+- `block_history` adds new columns: `height`, `block_hash`, `pool_name`.
+
+**D2 — Signal & Fetch Pattern for Confirmed Blocks:**
+- WebSocket `block` event is a signal-only (hash, height).
+- On signal: async `GET /api/v1/block/{hash}` fetches full data (fees, pool, sizes).
+- Validated with `ConfirmedBlock` Pydantic model → Kafka key `confirmed_block`.
+- Subscription updated: `["mempool-blocks", "stats", "blocks"]`.
+
+**D3 — Schema Alignment:**
+- Single `ConfirmedBlock` model normalizes both REST API (backfill) and WebSocket (live) sources.
+- Both use camelCase: `extras.medianFee`, `extras.totalFees`, `extras.feeRange`, `extras.virtualSize`.
+- `ConfirmedBlockExtras` has defaults for all fields to handle partial payloads.
+
+**D4 — Ceiling vs Rounding:**
+- `round()` → `math.ceil()` in `evaluate_market_rules()`.
+- `ceil(2.5) = 3` → transaction enters the block. No underpayment risk.
+
+**D5 — Filter Removal + Read-Time Floor:**
+- Removed `AND median_fee > 0` from the historical query (preserves real market data).
+- Applied `max(1.0, historical_median)` as floor **after** the query, in the logic layer.
+- If 42% of blocks are zero-fee, the median drops → orchestrator recommends lower fees → correct behavior.
+
+**D6 — Directory Safety:**
+- All DuckDB connections use `Path(path).resolve()` + `os.makedirs(parent, exist_ok=True)`.
+- Handles `../` relative paths and missing directories gracefully.
+
+**D7 — Consumer Discrimination:**
+- Kafka message key routing (existing pattern): `stats`, `mempool_block`, `confirmed_block`.
+- No new topics or schema pollution needed.
+
+### Consequences
+
+**Positive:**
+1. Clear data lineage: speculative vs confirmed data are never mixed.
+2. Historical baseline grows in real-time as blocks are mined.
+3. Fee recommendations are always safe (ceiling, never floor).
+4. Zero-fee blocks contribute to baseline, correctly lowering fees in empty markets.
+5. Directory creation is automatic — no manual `mkdir` needed.
+
+**Trade-offs:**
+1. Breaking change: all existing DuckDB files must be deleted before running.
+2. Signal & Fetch adds ~150-300ms latency per block (REST API call).
+3. `mempool_stream` growth rate (~480 rows/min) requires future retention policy.
+
+### Verification
+
+```bash
+# Delete old DBs (breaking change)
+rm -f data/market/*.duckdb* data/history/*.duckdb*
+
+# Backfill confirmed blocks
+uv run python scripts/backfill_history.py
+
+# Full E2E Pipeline
+just infra-up && just radar && just storage && just ai-up
+just dashboard  # localhost:8501
+
+# Tests
+cd backend && uv run pytest -v  # 66 passed
+```
+
+### Related Files
+- [duckdb_consumer.py](backend/src/storage/duckdb_consumer.py) — 3-table schema + confirmed_block routing
+- [mempool_ws.py](backend/src/ingestors/mempool_ws.py) — Signal & Fetch pattern
+- [schemas.py](backend/src/schemas.py) — ConfirmedBlock + ConfirmedBlockExtras
+- [tools.py](backend/src/orchestrator/tools.py) — block_history baseline + mempool_stream current
+- [main.py](backend/src/orchestrator/main.py) — math.ceil()
+- [backfill_history.py](scripts/backfill_history.py) — Writes to block_history
+- [frontend/main.py](frontend/app/main.py) — Dashboard queries updated
+
