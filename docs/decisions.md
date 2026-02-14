@@ -951,3 +951,66 @@ cd backend && uv run pytest -v  # 66 passed
 - [backfill_history.py](scripts/backfill_history.py) — Writes to block_history
 - [frontend/main.py](frontend/app/main.py) — Dashboard queries updated
 
+---
+
+## ADR-010: Scientific Backtesting — Strategy Validation
+
+**Date:** 2026-02-14
+**Status:** Accepted
+
+### Context
+
+Phase 2 requires validating that our fee strategy ("20% Premium") actually saves sats compared to naive alternatives. Without backtesting, the 20% threshold is an assumption, not evidence.
+
+### Decision
+
+Built `scripts/backtest.py` — a standalone backtesting engine that replays 4 fee strategies against `block_history` (confirmed blocks) and measures cumulative cost, slippage, and hit rate.
+
+**Strategies tested:**
+
+| ID | Strategy | Logic |
+|---|---|---|
+| S0 | Naive (Market) | Always pay `ceil(median_fee)` — zero intelligence baseline |
+| S1 | SMA-20 | Simple Moving Average of last 20 blocks |
+| S2 | EMA-20 | Exponential Moving Average (α=2/21) |
+| S3 | Orchestrator | 20% Premium threshold, `ceil()`, `max(1, ...)` — our production logic |
+
+**Results (146 blocks, heights 936298–936445):**
+
+| Strategy | Σ Cost | Slippage | Hit Rate |
+|---|---|---|---|
+| S0 Naive (Market) | 206 sv | baseline | 98.6% |
+| S1 SMA-20 | 205 sv | -0.5% | 89.7% |
+| S2 EMA-20 | 196 sv | -4.9% | 93.8% |
+| **S3 Orchestrator** | **149 sv** | **-27.7%** | **82.2%** |
+
+**Market context:** Low-fee period (avg 0.91 sat/vB), 37% zero-fee blocks.
+
+### Consequences
+
+**Positive:**
+1. Orchestrator strategy is the clear winner: **saves 27.7%** of cumulative fees vs naive.
+2. Hit rate of 82% is acceptable — the 18% of "misses" are blocks where our fee wouldn't have entered, but in practice a WAIT decision means we don't broadcast at all.
+3. EMA-20 is a strong runner-up (-4.9%, 94% hit rate) — could be useful as a hybrid input.
+
+**Trade-offs:**
+1. Results are from a **low-fee period**. High-volatility periods may shift rankings.
+2. Hit rate favors naive (98.6%) — our strategy intentionally sacrifices inclusion for savings.
+3. The backtest assumes 1 tx per block, which simplifies real-world behavior.
+
+**Recommendation:**
+- Keep the 20% Premium strategy as primary.
+- Consider adding EMA as a secondary signal in Phase 3.
+- Re-run backtest periodically as more blocks accumulate (especially after fee spikes).
+
+### Verification
+
+```bash
+cd backend && uv run python ../scripts/backtest.py
+```
+
+### Related Files
+- [backtest.py](scripts/backtest.py) — Backtesting engine
+- [main.py](backend/src/orchestrator/main.py) — `evaluate_market_rules()` (S3 source of truth)
+
+
