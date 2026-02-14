@@ -106,7 +106,8 @@ The Radar pattern provides a lightweight, metadata-first approach to ingesting B
   - **Features:**
     - **KPIs:** Mempool size (txs), current median fee (sat/vB), pending fees (BTC), blocks to clear.
     - **Blocks Table:** Last 10 projected blocks (`block_index=0`) with fees, tx count, and block size.
-    - **Fee Trend Chart:** Historical `median_fee` over ~24h (zero-fee blocks filtered).
+    - **Fee Trend Chart:** Historical `median_fee` from confirmed blocks (`block_history`).
+    - **Strategy Simulator:** Interactive strategy selector (SMA-20, EMA-20, Orchestrator) with overlay chart comparing strategy recommendations against actual fees, plus KPIs (cumulative cost, slippage, hit rate). Powered by `src.strategies` module.
     - **Graceful Degradation:** Shows offline status and guidance when DuckDB is unavailable.
 - **Launch:** `just dashboard`
 
@@ -204,6 +205,7 @@ The system implements a **Strict Data Isolation** pattern with physically separa
 - `src.ingestors`: External data source connectors (WebSocket + REST API).
 - `src.schemas`: Data contracts and Pydantic models.
 - `src.storage`: Persistence logic.
+- `src.strategies`: Fee strategy functions (naive, SMA, EMA, orchestrator) — shared by dashboard and backtest.
 - `src.utils`: Stateless helpers.
 
 ## 4. Developer Experience (DX) & Quality Assurance
