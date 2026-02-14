@@ -29,9 +29,9 @@ The project addresses the auction market for Bitcoin block space.
 - ~~**[Data] Zero-Fee Block Filter:** Exclude miner-filled blocks (`median_fee = 0`) from historical baseline.~~ ✅ Done (ADR-008)
 - ~~**[Fix] MinRelayFee Floor:** Enforce `max(1, round())` on `recommended_fee`.~~ ✅ Done (ADR-008)
 - ~~**[UI] Dashboard Real Data:** Connect Streamlit to live DuckDB queries.~~ ✅ Done (ADR-008)
-- **[Analytics] Scientific Backtesting:**
-    - **Metric:** Slippage / Opportunity Cost (Did we save sats vs the market?).
-    - **Baseline:** Compare our "20% Premium" strategy against Simple Moving Averages (SMA/EMA). We must beat the index.
+- ~~**[Analytics] Scientific Backtesting:**~~ ✅ Done (ADR-010)
+    - **Result:** Orchestrator saves 27.7% vs market. Hit rate: 82%.
+    - **Baseline:** 20% Premium beats SMA-20 (-0.5%) and EMA-20 (-4.9%).
 
 ### Phase 3: The Prescriptive Operator — 🛠️ Q2 2026
 - **Concept:** Move from Descriptive/Predictive to **Prescriptive Analytics**.
@@ -51,4 +51,4 @@ The project addresses the auction market for Bitcoin block space.
 
 ---
 **Lead Engineer:** Israel (@ieshatchuell)
-**Status:** Phase 2 In Progress.
+**Status:** Phase 2 Completed ✅. Phase 3 next.
