@@ -1,9 +1,19 @@
+import json
 import os
-import streamlit as st
-import pandas as pd
-import duckdb
-from dotenv import load_dotenv
+import sys
 from pathlib import Path
+
+import duckdb
+import pandas as pd
+import streamlit as st
+from dotenv import load_dotenv
+
+# Ensure backend/src is importable for strategies module
+_BACKEND_DIR = str(Path(__file__).resolve().parent.parent.parent / "backend")
+if _BACKEND_DIR not in sys.path:
+    sys.path.insert(0, _BACKEND_DIR)
+
+from src.strategies import compute_slippage, compute_strategy_fees
 
 # Load environment variables from root .env
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../../.env"))
@@ -113,6 +123,16 @@ try:
         ORDER BY height ASC
     """, conn)
 
+    # Full block_history for Strategy Simulator
+    sim_df = safe_query_df("""
+        SELECT
+            height,
+            median_fee,
+            fee_range
+        FROM block_history
+        ORDER BY height ASC
+    """, conn)
+
     conn.close()
     data_available = True
 
@@ -174,7 +194,7 @@ if data_available and not blocks_df.empty:
 
     st.dataframe(
         display_df,
-        use_container_width=True,
+        width="stretch",
         hide_index=True
     )
 else:
@@ -191,3 +211,86 @@ if data_available and not trend_df.empty:
     )
 else:
     st.info("Not enough data for trend chart.")
+
+
+# --- ROW 4: STRATEGY SIMULATOR ---
+st.divider()
+st.subheader("📊 STRATEGY SIMULATOR")
+st.caption("Compare fee strategies against confirmed block history")
+
+if data_available and not sim_df.empty and len(sim_df) > 1:
+
+    # Parse fee_ranges
+    median_fees = sim_df["median_fee"].tolist()
+    heights = sim_df["height"].tolist()
+    fee_ranges = []
+    for fr_raw in sim_df["fee_range"]:
+        if isinstance(fr_raw, str):
+            try:
+                fee_ranges.append(json.loads(fr_raw))
+            except (json.JSONDecodeError, TypeError):
+                fee_ranges.append([])
+        elif isinstance(fr_raw, list):
+            fee_ranges.append(fr_raw)
+        else:
+            fee_ranges.append([])
+
+    # Strategy selector
+    strategy_options = {
+        "SMA-20 (Simple Moving Average)": "sma",
+        "EMA-20 (Exponential Moving Average)": "ema",
+        "Orchestrator (20% Premium)": "orchestrator",
+    }
+    selected_label = st.selectbox(
+        "Select Strategy",
+        options=list(strategy_options.keys()),
+        index=2,  # Default: Orchestrator
+    )
+    selected_key = strategy_options[selected_label]
+
+    # Run strategies
+    naive_result = compute_strategy_fees(median_fees, fee_ranges, "naive")
+    strategy_result = compute_strategy_fees(median_fees, fee_ranges, selected_key)
+    slippage = compute_slippage(strategy_result.cumulative_cost, naive_result.cumulative_cost)
+
+    # KPIs
+    kpi_col1, kpi_col2, kpi_col3 = st.columns(3)
+    kpi_col1.metric(
+        label="Σ CUMULATIVE COST",
+        value=f"{strategy_result.cumulative_cost:.0f} sat/vB",
+        delta=f"{slippage:+.1f}% vs market",
+        delta_color="inverse",  # negative = green (savings)
+    )
+    kpi_col2.metric(
+        label="SLIPPAGE",
+        value=f"{slippage:+.1f}%",
+        delta="savings" if slippage < 0 else "overpay",
+        delta_color="inverse",
+    )
+    kpi_col3.metric(
+        label="HIT RATE",
+        value=f"{strategy_result.hit_rate:.1f}%",
+        delta=f"{strategy_result.hit_rate - naive_result.hit_rate:+.1f}% vs naive",
+        delta_color="normal",
+    )
+
+    # Overlay chart: Truth vs Strategy
+    chart_df = pd.DataFrame({
+        "height": heights,
+        "The Truth (Median Fee)": [max(1.0, f) for f in median_fees],
+        f"{strategy_result.name}": strategy_result.fees,
+    }).set_index("height")
+
+    st.line_chart(
+        chart_df,
+        color=["#F7931A", "#00FF41"],  # Orange = truth, Green = strategy
+    )
+
+    st.caption(
+        f"📦 {len(median_fees)} confirmed blocks "
+        f"(heights {heights[0]:,} → {heights[-1]:,}) · "
+        f"Naive baseline: {naive_result.cumulative_cost:.0f} sat/vB"
+    )
+
+else:
+    st.info("Not enough confirmed block data for simulation. Run `uv run python scripts/backfill_history.py` first.")
