@@ -131,6 +131,7 @@ The system implements a **Hybrid Architecture** combining local processes for sp
 - **Vault (DuckDB):** Typed storage with Pydantic validation at ingestion boundary.
 - **Brain (Orchestrator):** Neuro-Symbolic agent: Python computes decisions, Llama 3.2 generates explanations.
 - **Agent Memory:** Dedicated `agent_history.duckdb` for storing decision logs (Action, Reasoning, Fee) to ensure auditability and avoid write conflicts.
+- **Strategy Engine:** Reusable `strategies.py` module powers both CLI backtesting and dashboard simulation.
 
 ### 3. Typed Schema (Silver Layer)
 
@@ -143,7 +144,7 @@ The system uses **strongly-typed tables** with Pydantic validation:
 - `total_fee`: UBIGINT (fees in Satoshis)
 - `min_fee`: DOUBLE (minimum fee rate to enter mempool)
 
-**`projected_blocks` table**
+**`mempool_stream` table** (projected blocks from WebSocket)
 - `ingestion_time`: TIMESTAMP (UTC)
 - `block_index`: UTINYINT (0=next block, 1=following, etc.)
 - `block_size`: UINTEGER (bytes)
@@ -152,6 +153,16 @@ The system uses **strongly-typed tables** with Pydantic validation:
 - `total_fees`: UBIGINT (fees in Satoshis)
 - `median_fee`: DOUBLE (median fee rate)
 - `fee_range`: JSON (array of fee rates: [min, p10, p25, p50, p75, p90, max])
+
+**`block_history` table** (confirmed blocks via REST API)
+- `ingestion_time`: TIMESTAMP (UTC)
+- `height`: UINTEGER (block height)
+- `hash`: VARCHAR (block hash)
+- `pool_name`: VARCHAR (mining pool)
+- `n_tx`: UINTEGER (transaction count)
+- `total_fees`: UBIGINT (fees in Satoshis)
+- `median_fee`: DOUBLE (median fee rate)
+- `fee_range`: JSON (array of fee rates)
 
 > **Note:** All monetary values are stored as `UBIGINT` (unsigned big integers) in **Satoshis** to prevent floating-point precision errors.
 
@@ -203,10 +214,13 @@ The system uses **strongly-typed tables** with Pydantic validation:
 uv run python -c "import duckdb; conn = duckdb.connect('data/market/mempool_data.duckdb', read_only=True); print(conn.execute('SELECT * FROM mempool_stats ORDER BY ingestion_time DESC LIMIT 10').df())"
 
 # Query projected blocks (most recent snapshot)
-uv run python -c "import duckdb; conn = duckdb.connect('data/market/mempool_data.duckdb', read_only=True); print(conn.execute('SELECT ingestion_time, block_index, n_tx, total_fees, median_fee, fee_range FROM projected_blocks WHERE ingestion_time = (SELECT MAX(ingestion_time) FROM projected_blocks) ORDER BY block_index').df())"
+uv run python -c "import duckdb; conn = duckdb.connect('data/market/mempool_data.duckdb', read_only=True); print(conn.execute('SELECT ingestion_time, block_index, n_tx, total_fees, median_fee, fee_range FROM mempool_stream WHERE ingestion_time = (SELECT MAX(ingestion_time) FROM mempool_stream) ORDER BY block_index').df())"
 
-# Audit data quality (verify block_index ordering and fee_range structure)
-uv run python -c "import duckdb; conn = duckdb.connect('data/market/mempool_data.duckdb', read_only=True); print(conn.execute('SELECT ingestion_time, block_index, total_fees, fee_range FROM projected_blocks ORDER BY ingestion_time DESC LIMIT 5').df())"
+# Query confirmed block history
+uv run python -c "import duckdb; conn = duckdb.connect('data/market/mempool_data.duckdb', read_only=True); print(conn.execute('SELECT height, median_fee, pool_name FROM block_history ORDER BY height DESC LIMIT 10').df())"
+
+# Run Scientific Backtest (compare 4 fee strategies)
+cd backend && uv run python ../scripts/backtest.py
 ```
 
 **From Dashboard:**
@@ -237,6 +251,7 @@ cd backend && uv run pytest tests/test_api.py -v
 
 - [Architecture Guide](docs/architecture.md) - System design and component breakdown
 - [Decision Log](docs/decisions.md) - Architectural decisions and project journal
+- [Strategy Roadmap](docs/strategy.md) - Product vision and phased roadmap
 
 ## 🔧 Development Workflow
 

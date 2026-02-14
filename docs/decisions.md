@@ -1013,4 +1013,52 @@ cd backend && uv run python ../scripts/backtest.py
 - [backtest.py](scripts/backtest.py) — Backtesting engine
 - [main.py](backend/src/orchestrator/main.py) — `evaluate_market_rules()` (S3 source of truth)
 
+---
+
+## ADR-011: Strategy Simulator — Interactive Dashboard & Reusable Module
+
+**Date:** 2026-02-14
+**Status:** Accepted
+
+### Context
+
+ADR-010 validated our strategy via CLI (`backtest.py`), but the results were static. We needed:
+1. A reusable strategy module — `backtest.py` had inline functions that couldn't be shared with the dashboard.
+2. Visual comparison — stakeholders (and the orchestrator itself, in Phase 3) need to see strategy behavior over time, not just summary numbers.
+
+### Decision
+
+**D1 — Extracted `backend/src/strategies.py`:**
+- Pure functions: `strategy_naive()`, `strategy_sma()`, `strategy_ema()`, `strategy_orchestrator()`
+- Batch compute: `compute_strategy_fees(median_fees, fee_ranges, strategy_name) → StrategyResult`
+- Utility: `compute_slippage(strategy_cost, naive_cost) → float`
+- No DuckDB dependency — takes plain lists, returns dataclasses. Testable and framework-agnostic.
+
+**D2 — Refactored `scripts/backtest.py`:**
+- Now a thin wrapper: loads data → calls `compute_strategy_fees()` → prints report.
+- Verified identical output (206/205/196/149 sv, same hit rates).
+
+**D3 — Dashboard Strategy Simulator:**
+- Added `sys.path` bridge for frontend→backend imports.
+- `st.selectbox` with 3 strategies: SMA-20, EMA-20, Orchestrator.
+- Overlay chart: "The Truth" (orange, actual `median_fee`) vs strategy recommendation (green).
+- 3 KPIs with delta indicators: Σ Cost, Slippage, Hit Rate.
+
+### Consequences
+
+**Positive:**
+1. Single source of truth for strategy logic — any change to `strategies.py` updates both CLI and dashboard.
+2. Dashboard is now a decision-support tool, not just a monitor.
+3. Visual comparison makes it easy to spot where strategies diverge from market.
+
+**Trade-offs:**
+1. `sys.path` hack for frontend→backend imports is pragmatic but not ideal. Phase 4 (React migration) will solve this with a proper API layer.
+2. Dashboard recalculates strategies on every page load (no caching). Acceptable at 146 blocks, may need `@st.cache_data` at scale.
+
+### Related Files
+- [strategies.py](backend/src/strategies.py) — Reusable strategy module
+- [backtest.py](scripts/backtest.py) — CLI backtest (thin wrapper)
+- [main.py](frontend/app/main.py) — Dashboard with Strategy Simulator
+
+
 

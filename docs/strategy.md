@@ -32,9 +32,12 @@ The project addresses the auction market for Bitcoin block space.
 - ~~**[Analytics] Scientific Backtesting:**~~ ✅ Done (ADR-010)
     - **Result:** Orchestrator saves 27.7% vs market. Hit rate: 82%.
     - **Baseline:** 20% Premium beats SMA-20 (-0.5%) and EMA-20 (-4.9%).
+- ~~**[UI] Strategy Simulator:** Interactive dashboard overlay comparing strategies against real block data.~~ ✅ Done (ADR-011)
 
 ### Phase 3: The Prescriptive Operator — 🛠️ Q2 2026
 - **Concept:** Move from Descriptive/Predictive to **Prescriptive Analytics**.
+- **[Core] Dual-Mode Strategy:** PATIENT (Orchestrator, -27.7%, for treasury) vs RELIABLE (EMA-20, -4.9%, for time-sensitive ops).
+- **[Signal] EMA Hybrid:** Integrate EMA as secondary signal in orchestrator for urgency estimation.
 - **[Feature] Watchlist Module:** Allow tracking specific TXIDs (without wallet connection).
 - **[Feature] RBF Advisor (Sender Strategy):** Alert if a tracked tx is stuck and calculate optimal replacement fee.
 - **[Feature] CPFP Advisor (Receiver Strategy):** Alert if an incoming payment is stuck and calculate child-fee to unstick it.
