@@ -11,7 +11,8 @@ from pydantic import BaseModel, Field
 class MempoolContext(BaseModel):
     """Market context passed to the LLM for fee analysis.
 
-    Contains current mempool conditions and historical reference points.
+    Contains current mempool conditions, historical reference points,
+    and EMA signal for urgency estimation.
     """
 
     current_median_fee: float = Field(
@@ -43,6 +44,23 @@ class MempoolContext(BaseModel):
         description="Qualitative assessment of mempool traffic",
     )
 
+    # EMA Hybrid Signal (Phase 3)
+    ema_fee: float = Field(
+        default=0.0,
+        description="EMA-20 fee rate (sat/vB) from confirmed block history",
+        ge=0.0,
+    )
+    ema_trend: Literal["RISING", "FALLING", "STABLE"] = Field(
+        default="STABLE",
+        description="EMA directional trend based on recent movement",
+    )
+
+    # Strategy Mode (Phase 3)
+    strategy_mode: Literal["PATIENT", "RELIABLE"] = Field(
+        default="PATIENT",
+        description="Active strategy: PATIENT (treasury) or RELIABLE (time-sensitive)",
+    )
+
 
 class AgentDecision(BaseModel):
     """Structured output from the fee decision agent.
@@ -69,4 +87,8 @@ class AgentDecision(BaseModel):
         ...,
         description="Brief explanation of the decision rationale",
         max_length=500,
+    )
+    strategy_mode: str = Field(
+        default="PATIENT",
+        description="Strategy mode used for this decision (PATIENT or RELIABLE)",
     )

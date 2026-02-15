@@ -63,9 +63,10 @@ class TestAgentHistoryInit:
                 ("ai_confidence", "DOUBLE"),
                 ("ai_reasoning", "VARCHAR"),
                 ("model_version", "VARCHAR"),
+                ("strategy_mode", "VARCHAR"),
             ]
             
-            assert len(columns) == len(expected_columns), "Should have 7 columns"
+            assert len(columns) == len(expected_columns), "Should have 8 columns"
             for (actual_name, actual_type), (expected_name, expected_type) in zip(
                 columns, expected_columns
             ):
@@ -92,7 +93,7 @@ class TestAgentHistorySave:
             recommended_fee=15,
             ai_confidence=0.85,
             ai_reasoning="Fees are 40% above historical average, waiting is optimal.",
-            model_version="neuro-symbolic-v1",
+            model_version="neuro-symbolic-v2",
         )
         
         # Save the record
@@ -119,6 +120,7 @@ class TestAgentHistorySave:
                 db_confidence,
                 db_reasoning,
                 db_model_version,
+                db_strategy_mode,
             ) = row
             
             assert db_action == "WAIT"
@@ -126,7 +128,8 @@ class TestAgentHistorySave:
             assert db_recommended_fee == 15
             assert db_confidence == 0.85
             assert db_reasoning == "Fees are 40% above historical average, waiting is optimal."
-            assert db_model_version == "neuro-symbolic-v1"
+            assert db_model_version == "neuro-symbolic-v2"
+            assert db_strategy_mode == "PATIENT"
             # Timestamp comparison (DuckDB returns timezone-naive)
             assert db_timestamp.year == 2026
             assert db_timestamp.month == 2
@@ -186,7 +189,8 @@ class TestAgentDecisionRecordValidation:
         assert record.action == "BROADCAST"
         assert record.current_fee == 10
         assert record.ai_confidence == 1.0  # Default value
-        assert record.model_version == "neuro-symbolic-v1"  # Default value
+        assert record.model_version == "neuro-symbolic-v2"  # Default value
+        assert record.strategy_mode == "PATIENT"  # Default value
 
     def test_missing_required_field_raises_error(self) -> None:
         """Verify that missing required fields raise ValidationError."""

@@ -1060,5 +1060,90 @@ ADR-010 validated our strategy via CLI (`backtest.py`), but the results were sta
 - [backtest.py](scripts/backtest.py) — CLI backtest (thin wrapper)
 - [main.py](frontend/app/main.py) — Dashboard with Strategy Simulator
 
+---
 
+## ADR-012: Dual-Mode Strategy Engine & EMA Hybrid Signal
 
+**Date:** 2026-02-15
+**Status:** Accepted
+
+### Context
+
+Phase 2 backtesting (ADR-010) revealed two distinct strategies with complementary strengths:
+
+| Strategy | Savings | Hit Rate | Best For |
+|----------|---------|----------|----------|
+| Orchestrator (20% Premium) | -27.7% | 82.2% | Treasury operations (patience rewarded) |
+| EMA-20 | -4.9% | 93.8% | Time-sensitive operations (reliability matters) |
+
+The orchestrator was hardcoded to a single strategy. Different operational contexts (treasury consolidation vs urgent payments) demand different risk/reward tradeoffs.
+
+Additionally, the EMA signal was only used in backtesting (`strategies.py`), not in the live orchestrator. Its trend information (fees rising/falling) could improve confidence calibration in the existing strategy.
+
+### Decision
+
+**D1 — Dual-Mode Strategy Engine:**
+- Added `STRATEGY_MODE` env var: `PATIENT` (default) or `RELIABLE`.
+- Refactored `evaluate_market_rules()` to dispatch by mode:
+  - **PATIENT:** Existing 20% premium logic + EMA confidence adjustments.
+  - **RELIABLE:** Always BROADCAST with `ceil(ema_fee)`, fixed confidence 0.8.
+- Mode propagated through the full pipeline: `MempoolContext` → `MarketDecision` → `AgentDecision` → `decision_history`.
+
+**D2 — EMA Hybrid Signal (PATIENT mode):**
+- Compute EMA-20 from `block_history` and classify trend (RISING/FALLING/STABLE).
+- Trend adjusts PATIENT confidence as secondary intelligence:
+
+| Trend + Action | Adjustment | Rationale |
+|---|---|---|
+| RISING + WAIT | +0.1 | Fees climbing → WAIT is well-justified |
+| RISING + BROADCAST | -0.15 | Fees climbing → risky to broadcast now |
+| FALLING + WAIT | -0.1 | Fees dropping → our caution may be excessive |
+| FALLING + BROADCAST | +0.1 | Fees dropping → good time to broadcast |
+| STABLE | ±0.0 | No adjustment needed |
+
+Confidence bounded to [0.3, 1.0].
+
+**D3 — EMA Trend Classification:**
+- `_compute_ema()`: Exponential Moving Average with α = 2/(window+1).
+- `_classify_ema_trend()`: Compares EMA now vs 5 blocks ago. ±5% → RISING/FALLING.
+
+**D4 — Persistence & Auditability:**
+- `decision_history` table: new `strategy_mode VARCHAR NOT NULL DEFAULT 'PATIENT'` column.
+- `model_version` bumped to `neuro-symbolic-v2`.
+- Breaking change: `rm data/history/*.duckdb*` required (dev-phase decision).
+
+**D5 — Dashboard Mode Badge:**
+- Header shows active mode: 🐢 PATIENT or ⚡ RELIABLE.
+- Strategy Simulator continues to allow interactive comparison of all strategies regardless of active mode.
+
+### Consequences
+
+**Positive:**
+1. Operators can choose strategy per context without code changes.
+2. EMA trend makes PATIENT mode smarter — confidence reflects market momentum.
+3. Full audit trail: every decision records which mode produced it.
+4. Dashboard provides at-a-glance mode awareness.
+
+**Trade-offs:**
+1. Breaking change on `decision_history` (acceptable in dev phase).
+2. RELIABLE mode doesn't analyze premiums — intentionally sacrifices savings for reliability.
+3. EMA trend is computed from all `block_history` rows per cycle — may need optimization at scale.
+
+### Verification
+
+```bash
+cd backend && uv run pytest -v  # 111 passed (45 new), 0 failed (0.47s)
+```
+
+**Test Coverage:**
+- `test_orchestrator.py`: 20 tests (PATIENT mode, RELIABLE mode, EMA confidence)
+- `test_strategies.py`: 25 tests (pure strategy functions)
+- `test_agent_history.py`: Updated for 8-column schema + v2
+
+### Related Files
+- [main.py](backend/src/orchestrator/main.py) — Dual-mode `evaluate_market_rules()`
+- [tools.py](backend/src/orchestrator/tools.py) — EMA computation + trend classification
+- [schemas.py](backend/src/orchestrator/schemas.py) — `ema_fee`, `ema_trend`, `strategy_mode` fields
+- [config.py](backend/src/config.py) — `strategy_mode` setting
+- [agent_history.py](backend/src/storage/agent_history.py) — `strategy_mode` persistence
+- [frontend/main.py](frontend/app/main.py) — Mode badge in dashboard

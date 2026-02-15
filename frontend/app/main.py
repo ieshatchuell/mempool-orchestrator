@@ -20,6 +20,7 @@ load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../../.env"))
 
 # Configuration via environment variables (fully decoupled from backend)
 DUCKDB_PATH = os.getenv("DUCKDB_PATH", "../data/market/mempool_data.duckdb")
+STRATEGY_MODE = os.getenv("STRATEGY_MODE", "PATIENT")
 
 
 # --- DATABASE HELPERS ---
@@ -142,11 +143,18 @@ except Exception as e:
 
 
 # --- HEADER ---
-col1, col2 = st.columns([3, 1])
+col1, col2, col3 = st.columns([3, 1, 1])
 with col1:
     st.title("⚡ MEMPOOL ORCHESTRATOR_")
     st.caption("Real-time Auditor // Hybrid Signal Architecture")
 with col2:
+    mode_icon = "🐢" if STRATEGY_MODE == "PATIENT" else "⚡"
+    mode_color = "#00FF41" if STRATEGY_MODE == "PATIENT" else "#F7931A"
+    st.markdown(
+        f"### {mode_icon} {STRATEGY_MODE}",
+        help="PATIENT: Treasury ops (-27.7%, 82% hit) · RELIABLE: Time-sensitive (-4.9%, 94% hit)"
+    )
+with col3:
     st.markdown("### 🟢 LIVE" if data_available else "### 🔴 OFFLINE")
 
 st.divider()

@@ -8,6 +8,7 @@ Data sources:
 - block_history: Confirmed mined blocks (from backfill + WebSocket block signals)
 """
 
+import math
 import os
 from pathlib import Path
 from typing import Literal
@@ -21,6 +22,11 @@ from src.orchestrator.schemas import MempoolContext
 
 # Historical window for baseline calculation
 HISTORICAL_WINDOW_ROWS = 100  # Number of confirmed blocks for historical median
+
+# EMA parameters
+EMA_WINDOW = 20  # Blocks for EMA smoothing
+EMA_TREND_LOOKBACK = 5  # Compare EMA now vs N blocks ago
+EMA_TREND_THRESHOLD = 5.0  # ±% to classify RISING/FALLING
 
 
 def _classify_traffic(mempool_size: int) -> Literal["LOW", "NORMAL", "HIGH"]:
@@ -38,16 +44,76 @@ def _classify_traffic(mempool_size: int) -> Literal["LOW", "NORMAL", "HIGH"]:
     return "NORMAL"
 
 
+def _compute_ema(fees: list[float], window: int = EMA_WINDOW) -> float:
+    """Compute Exponential Moving Average over a list of fee values.
+    
+    Args:
+        fees: Ordered list of median_fee values (oldest first).
+        window: Smoothing window (α = 2/(window+1)).
+        
+    Returns:
+        Final EMA value, or 0.0 if no data.
+    """
+    if not fees:
+        return 0.0
+    
+    alpha = 2.0 / (window + 1)
+    ema = fees[0]
+    for fee in fees[1:]:
+        ema = alpha * fee + (1 - alpha) * ema
+    return ema
+
+
+def _classify_ema_trend(
+    fees: list[float],
+    window: int = EMA_WINDOW,
+    lookback: int = EMA_TREND_LOOKBACK,
+    threshold: float = EMA_TREND_THRESHOLD,
+) -> Literal["RISING", "FALLING", "STABLE"]:
+    """Classify EMA directional trend.
+    
+    Compares the EMA at the end of the series vs EMA computed
+    up to `lookback` blocks earlier. If the change exceeds ±threshold%,
+    the trend is RISING or FALLING; otherwise STABLE.
+    
+    Args:
+        fees: Ordered list of median_fee values (oldest first).
+        window: EMA smoothing window.
+        lookback: Number of blocks back to compare.
+        threshold: Percentage change to trigger non-STABLE classification.
+        
+    Returns:
+        "RISING", "FALLING", or "STABLE".
+    """
+    if len(fees) < lookback + 1:
+        return "STABLE"
+    
+    ema_now = _compute_ema(fees, window)
+    ema_prev = _compute_ema(fees[:-lookback], window)
+    
+    if ema_prev == 0:
+        return "STABLE"
+    
+    change_pct = ((ema_now - ema_prev) / ema_prev) * 100
+    
+    if change_pct > threshold:
+        return "RISING"
+    elif change_pct < -threshold:
+        return "FALLING"
+    return "STABLE"
+
+
 def get_market_context() -> MempoolContext:
     """Query DuckDB for current mempool state and compute market context.
     
     Data flow:
     - Current fee: from mempool_stream (latest projected next block)
     - Baseline fee: from block_history (confirmed blocks, stable)
+    - EMA signal: from block_history (last EMA_WINDOW confirmed blocks)
     - Mempool stats: from mempool_stats (current mempool state)
     
     Returns:
-        MempoolContext with current and historical fee data.
+        MempoolContext with current, historical, and EMA fee data.
         
     Raises:
         RuntimeError: If database queries fail or return no data.
@@ -105,6 +171,18 @@ def get_market_context() -> MempoolContext:
             # Apply minrelaytxfee floor (1 sat/vB) at read time, not in the query
             historical_median_fee = max(1.0, historical_result[0])
         
+        # Compute EMA-20 from block_history (confirmed blocks)
+        ema_query = f"""
+            SELECT median_fee
+            FROM block_history
+            ORDER BY height ASC
+        """
+        ema_rows = conn.execute(ema_query).fetchall()
+        ema_fees = [row[0] for row in ema_rows] if ema_rows else []
+        
+        ema_fee = max(1.0, _compute_ema(ema_fees)) if ema_fees else 0.0
+        ema_trend = _classify_ema_trend(ema_fees)
+        
         # Calculate fee premium percentage
         if historical_median_fee > 0:
             fee_premium_pct = ((current_median_fee - historical_median_fee) / historical_median_fee) * 100
@@ -117,7 +195,9 @@ def get_market_context() -> MempoolContext:
         logger.debug(
             f"Market context: current_fee={current_median_fee:.2f}, "
             f"historical_fee={historical_median_fee:.2f}, "
-            f"premium={fee_premium_pct:.1f}%, traffic={traffic_level}"
+            f"ema_fee={ema_fee:.2f}, ema_trend={ema_trend}, "
+            f"premium={fee_premium_pct:.1f}%, traffic={traffic_level}, "
+            f"mode={settings.strategy_mode}"
         )
         
         return MempoolContext(
@@ -127,6 +207,9 @@ def get_market_context() -> MempoolContext:
             mempool_bytes=mempool_bytes,
             fee_premium_pct=fee_premium_pct,
             traffic_level=traffic_level,
+            ema_fee=ema_fee,
+            ema_trend=ema_trend,
+            strategy_mode=settings.strategy_mode,
         )
         
     finally:
