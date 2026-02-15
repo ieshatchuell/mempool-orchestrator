@@ -157,6 +157,12 @@ with col2:
 with col3:
     st.markdown("### 🟢 LIVE" if data_available else "### 🔴 OFFLINE")
 
+# Dust Watch indicator
+if data_available and not trend_df.empty:
+    latest_fee = trend_df["Median Fee"].iloc[-1] if len(trend_df) > 0 else None
+    if latest_fee is not None and latest_fee < 5.0:
+        st.success(f"💎 **Dust Watch: Consolidation Window!** Median fee {latest_fee:.2f} sat/vB < 5 sat/vB — ideal for UTXO cleanup.")
+
 st.divider()
 
 

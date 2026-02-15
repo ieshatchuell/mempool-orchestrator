@@ -34,14 +34,14 @@ The project addresses the auction market for Bitcoin block space.
     - **Baseline:** 20% Premium beats SMA-20 (-0.5%) and EMA-20 (-4.9%).
 - ~~**[UI] Strategy Simulator:** Interactive dashboard overlay comparing strategies against real block data.~~ ✅ Done (ADR-011)
 
-### Phase 3: The Prescriptive Operator — 🛠️ Q2 2026
+### Phase 3: The Prescriptive Operator — 🛠️ Q1 2026
 - **Concept:** Move from Descriptive/Predictive to **Prescriptive Analytics**.
 - ~~**[Core] Dual-Mode Strategy:** PATIENT (Orchestrator, -27.7%, for treasury) vs RELIABLE (EMA-20, -4.9%, for time-sensitive ops).~~ ✅ Done (ADR-012)
 - ~~**[Signal] EMA Hybrid:** Integrate EMA as secondary signal in orchestrator for urgency estimation.~~ ✅ Done (ADR-012)
-- **[Feature] Watchlist Module:** Allow tracking specific TXIDs (without wallet connection).
+- ~~**[Feature] Watchlist Module:** Allow tracking specific TXIDs (without wallet connection).~~ ✅ Done (ADR-013)
 - **[Feature] RBF Advisor (Sender Strategy):** Alert if a tracked tx is stuck and calculate optimal replacement fee.
 - **[Feature] CPFP Advisor (Receiver Strategy):** Alert if an incoming payment is stuck and calculate child-fee to unstick it.
-- **[Feature] Dust Watch:** Alert when fees dip below 5 sats/vB for UTXO consolidation windows.
+- ~~**[Feature] Dust Watch:** Alert when fees dip below 5 sats/vB for UTXO consolidation windows.~~ ✅ Done (ADR-013)
 
 ### Phase 4: Scalability & UX — ☁️ Q3 2026
 - **[UI]** Migrate Streamlit to React/Next.js for complex interactivity.
@@ -54,4 +54,4 @@ The project addresses the auction market for Bitcoin block space.
 
 ---
 **Lead Engineer:** Israel (@ieshatchuell)
-**Status:** Phase 3 In Progress 🔄. Dual-Mode + EMA Hybrid done.
+**Status:** Phase 3 In Progress 🔄. Dual-Mode, EMA, Watchlist, Dust Watch done. RBF/CPFP remaining.
