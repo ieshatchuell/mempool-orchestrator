@@ -30,11 +30,22 @@ The Orchestrator implements a **Safe-Guarded Hybrid AI** pattern for maximum rel
 
 ### Decision Rules (Deterministic)
 
+The orchestrator supports two strategy modes via `STRATEGY_MODE` env var:
+
+**🐢 PATIENT** (default) — Treasury operations, saves ~27.7%:
 ```python
 IF fee_premium_pct > 20%:
     action = WAIT         # Target: Historical Median Fee
 ELSE:
     action = BROADCAST    # Target: Current Median Fee
+
+# EMA trend adjusts confidence (secondary signal):
+# RISING + WAIT → boost confidence | FALLING + BROADCAST → boost confidence
+```
+
+**⚡ RELIABLE** — Time-sensitive operations, 94% hit rate:
+```python
+action = BROADCAST        # Always, with EMA-20 smoothed fee
 ```
 
 > **Critical:** The LLM **never** makes decisions. It only explains decisions already made by Python.
@@ -57,6 +68,7 @@ MEMPOOL_API_URL=https://mempool.space/api
 DUCKDB_PATH=data/market/mempool_data.duckdb
 DUCKDB_BATCH_SIZE=50
 AGENT_HISTORY_PATH=data/history/agent_history.duckdb
+STRATEGY_MODE=PATIENT  # PATIENT (treasury, -27.7%) or RELIABLE (time-sensitive, 94% hit)
 ```
 
 ### Project Structure
@@ -246,6 +258,9 @@ cd backend && uv run pytest tests/test_api.py -v
 - `tests/test_kafka_producer.py`: Kafka wrapper behavior
 - `tests/test_config.py`: Environment variable validation
 - `tests/test_api.py`: REST API client (httpx + respx mocking)
+- `tests/test_orchestrator.py`: Dual-mode strategy engine (PATIENT/RELIABLE + EMA)
+- `tests/test_strategies.py`: Pure fee strategy functions (naive, SMA, EMA, orchestrator)
+- `tests/test_agent_history.py`: Decision persistence layer
 
 ## 📚 Documentation
 
