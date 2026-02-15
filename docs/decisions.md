@@ -1147,3 +1147,49 @@ cd backend && uv run pytest -v  # 111 passed (45 new), 0 failed (0.47s)
 - [config.py](backend/src/config.py) — `strategy_mode` setting
 - [agent_history.py](backend/src/storage/agent_history.py) — `strategy_mode` persistence
 - [frontend/main.py](frontend/app/main.py) — Mode badge in dashboard
+
+---
+
+### ADR-013 | Watchlist Module + Dust Watch Alert
+**Date:** 2026-02-15
+**Status:** IMPLEMENTED
+**Supersedes:** None
+
+#### Context
+Phase 3 item 3 (Watchlist) and item 4 (Dust Watch) from the strategy roadmap. The orchestrator needed the ability to track specific Bitcoin transactions by TXID and alert on low-fee consolidation windows.
+
+**Data Source Analysis:**
+The WebSocket connection only delivers aggregated data (`stats` + `mempool-blocks` events). It does NOT provide individual transaction IDs. Therefore, tracking individual TXIDs requires REST API polling.
+
+#### Decision
+
+**Watchlist Module:**
+- **Persistence:** DuckDB table `watchlist` in the same DB as `agent_history` (avoids file lock conflicts with market data).
+- **Schema:** `txid` (PK), `role` (SENDER/RECEIVER), `added_at`, `status` (PENDING/CONFIRMED), `fee`, `fee_rate`, `confirmed_at`, `block_height`.
+- **Monitor:** Async REST polling via `GET /api/tx/{txid}` — checks `status.confirmed` for each PENDING tx.
+- **Integration:** Runs as Step G in the orchestrator loop, after decision persistence. Non-blocking, silent failures.
+- **SENDER/RECEIVER role:** Infrastructure for Session 8 RBF/CPFP advisors.
+
+**Dust Watch:**
+- Simple log alert: `💎 Dust Watch: Consolidation window!` when `ema_fee < 5 sat/vB`.
+- Dashboard banner: `st.success()` when latest median fee < 5 sat/vB.
+- Purely informational — no action change.
+
+#### Consequences
+- **Good:** Transaction tracking infrastructure ready for RBF/CPFP advisors (Session 8).
+- **Good:** `GET /api/mempool/recent` can seed real TXIDs for integration testing.
+- **Good:** Monitor handles API errors gracefully (404 for dropped txs, network errors) without breaking the decision loop.
+- **Neutral:** Shared DuckDB file means `rm data/history/*.duckdb*` also clears watchlist.
+- **Risk:** Public API rate limit (~10 req/min). Large watchlists could hit throttling. Mitigated by processing one tx per cycle.
+
+#### Verification
+- 19 unit tests in `test_watchlist.py` (schema, CRUD, status transitions, Pydantic validation).
+- 130 total tests passing (19 new + 111 existing).
+- E2E validated: DB persistence, Dust Watch detection at 1 sat/vB, graceful 404 handling for dropped tx.
+
+#### Related Files
+- [watchlist.py](backend/src/storage/watchlist.py) — DuckDB table + CRUD
+- [watchlist_monitor.py](backend/src/orchestrator/watchlist_monitor.py) — Async REST polling
+- [main.py](backend/src/orchestrator/main.py) — Dust Watch (Step E.2) + Watchlist check (Step G)
+- [frontend/main.py](frontend/app/main.py) — Dust Watch banner
+- [test_watchlist.py](backend/tests/test_watchlist.py) — 19 tests
