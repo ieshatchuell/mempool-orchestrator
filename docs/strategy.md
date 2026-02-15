@@ -36,8 +36,8 @@ The project addresses the auction market for Bitcoin block space.
 
 ### Phase 3: The Prescriptive Operator — 🛠️ Q2 2026
 - **Concept:** Move from Descriptive/Predictive to **Prescriptive Analytics**.
-- **[Core] Dual-Mode Strategy:** PATIENT (Orchestrator, -27.7%, for treasury) vs RELIABLE (EMA-20, -4.9%, for time-sensitive ops).
-- **[Signal] EMA Hybrid:** Integrate EMA as secondary signal in orchestrator for urgency estimation.
+- ~~**[Core] Dual-Mode Strategy:** PATIENT (Orchestrator, -27.7%, for treasury) vs RELIABLE (EMA-20, -4.9%, for time-sensitive ops).~~ ✅ Done (ADR-012)
+- ~~**[Signal] EMA Hybrid:** Integrate EMA as secondary signal in orchestrator for urgency estimation.~~ ✅ Done (ADR-012)
 - **[Feature] Watchlist Module:** Allow tracking specific TXIDs (without wallet connection).
 - **[Feature] RBF Advisor (Sender Strategy):** Alert if a tracked tx is stuck and calculate optimal replacement fee.
 - **[Feature] CPFP Advisor (Receiver Strategy):** Alert if an incoming payment is stuck and calculate child-fee to unstick it.
@@ -54,4 +54,4 @@ The project addresses the auction market for Bitcoin block space.
 
 ---
 **Lead Engineer:** Israel (@ieshatchuell)
-**Status:** Phase 2 Completed ✅. Phase 3 next.
+**Status:** Phase 3 In Progress 🔄. Dual-Mode + EMA Hybrid done.

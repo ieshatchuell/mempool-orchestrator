@@ -35,8 +35,12 @@ class AgentDecisionRecord(BaseModel):
     )
     ai_reasoning: str = Field(..., description="LLM-generated explanation for the decision")
     model_version: str = Field(
-        default="neuro-symbolic-v1",
+        default="neuro-symbolic-v2",
         description="Version identifier of the decision model",
+    )
+    strategy_mode: str = Field(
+        default="PATIENT",
+        description="Strategy mode used: PATIENT or RELIABLE",
     )
 
 
@@ -72,7 +76,8 @@ class AgentHistory:
                 recommended_fee UBIGINT NOT NULL,
                 ai_confidence DOUBLE NOT NULL,
                 ai_reasoning VARCHAR NOT NULL,
-                model_version VARCHAR NOT NULL
+                model_version VARCHAR NOT NULL,
+                strategy_mode VARCHAR NOT NULL DEFAULT 'PATIENT'
             )
         """)
 
@@ -85,8 +90,8 @@ class AgentHistory:
         self._conn.execute(
             """
             INSERT INTO decision_history 
-                (timestamp, action, current_fee, recommended_fee, ai_confidence, ai_reasoning, model_version)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                (timestamp, action, current_fee, recommended_fee, ai_confidence, ai_reasoning, model_version, strategy_mode)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 record.timestamp,
@@ -96,6 +101,7 @@ class AgentHistory:
                 record.ai_confidence,
                 record.ai_reasoning,
                 record.model_version,
+                record.strategy_mode,
             ],
         )
 
