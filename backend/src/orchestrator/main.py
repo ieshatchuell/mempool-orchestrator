@@ -25,7 +25,9 @@ from pydantic_ai.settings import ModelSettings
 from src.config import settings
 from src.orchestrator.schemas import AgentDecision, MempoolContext
 from src.orchestrator.tools import get_market_context
+from src.orchestrator.watchlist_monitor import check_watchlist
 from src.storage.agent_history import AgentDecisionRecord, AgentHistory
+from src.storage.watchlist import Watchlist
 
 
 # =============================================================================
@@ -269,9 +271,10 @@ async def decision_loop(agent: Agent[None, str]) -> None:
     5. Log result
     6. Persist decision to history (NON-CRITICAL)
     """
-    # Initialize persistence layer
+    # Initialize persistence layers
     history = AgentHistory(settings.agent_history_path)
-    logger.info(f"📂 Agent History initialized at {settings.agent_history_path}")
+    watchlist = Watchlist(settings.agent_history_path)
+    logger.info(f"📂 Agent History + Watchlist initialized at {settings.agent_history_path}")
     
     logger.info("🧠 Bitcoin Treasury Agent starting...")
     logger.info("🔒 SAFE-GUARDED AI MODE: Deterministic logic + AI commentary")
@@ -279,6 +282,7 @@ async def decision_loop(agent: Agent[None, str]) -> None:
     logger.info(f"   OLLAMA_MODEL: {OLLAMA_MODEL}")
     logger.info(f"   DECISION_INTERVAL: {DECISION_INTERVAL}s")
     logger.info(f"   AI_TIMEOUT: {AI_TIMEOUT}s")
+    logger.info(f"   WATCHLIST: {watchlist.count_active()} pending tx(s)")
     
     while True:
         try:
@@ -321,6 +325,13 @@ async def decision_loop(agent: Agent[None, str]) -> None:
                 f"Reasoning: {final_decision.reasoning}"
             )
             
+            # Step E.2: Dust Watch — consolidation opportunity alert
+            if context.ema_fee > 0 and context.ema_fee < 5.0:
+                logger.info(
+                    f"💎 Dust Watch: Consolidation window! "
+                    f"EMA fee {context.ema_fee:.2f} sat/vB < 5 sat/vB"
+                )
+            
             # Step F: Persist decision to history (silent, non-critical)
             try:
                 record = AgentDecisionRecord(
@@ -336,6 +347,14 @@ async def decision_loop(agent: Agent[None, str]) -> None:
                 logger.debug("💾 Decision persisted to history.")
             except Exception as e:
                 logger.warning(f"⚠️ Failed to persist decision: {type(e).__name__}: {e}")
+            
+            # Step G: Check watchlist for tx confirmations (non-blocking, non-critical)
+            try:
+                confirmed = await check_watchlist(watchlist)
+                if confirmed > 0:
+                    logger.info(f"   📋 Watchlist: {confirmed} tx(s) confirmed this cycle")
+            except Exception as e:
+                logger.warning(f"⚠️ Watchlist check failed: {type(e).__name__}: {e}")
             
         except RuntimeError as e:
             logger.error(f"❌ Data error: {e}")

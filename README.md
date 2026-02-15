@@ -143,6 +143,8 @@ The system implements a **Hybrid Architecture** combining local processes for sp
 - **Vault (DuckDB):** Typed storage with Pydantic validation at ingestion boundary.
 - **Brain (Orchestrator):** Neuro-Symbolic agent: Python computes decisions, Llama 3.2 generates explanations.
 - **Agent Memory:** Dedicated `agent_history.duckdb` for storing decision logs (Action, Reasoning, Fee) to ensure auditability and avoid write conflicts.
+- **Watchlist:** Track specific TXIDs by role (SENDER/RECEIVER). REST polling via `GET /api/tx/{txid}` detects confirmations.
+- **Dust Watch:** Alerts when EMA fee drops below 5 sat/vB — signals a UTXO consolidation window.
 - **Strategy Engine:** Reusable `strategies.py` module powers both CLI backtesting and dashboard simulation.
 
 ### 3. Typed Schema (Silver Layer)
@@ -261,6 +263,7 @@ cd backend && uv run pytest tests/test_api.py -v
 - `tests/test_orchestrator.py`: Dual-mode strategy engine (PATIENT/RELIABLE + EMA)
 - `tests/test_strategies.py`: Pure fee strategy functions (naive, SMA, EMA, orchestrator)
 - `tests/test_agent_history.py`: Decision persistence layer
+- `tests/test_watchlist.py`: Watchlist CRUD, schema, validation, status transitions
 
 ## 📚 Documentation
 
