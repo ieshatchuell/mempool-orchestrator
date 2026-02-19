@@ -348,9 +348,12 @@ async def decision_loop(agent: Agent[None, str]) -> None:
             except Exception as e:
                 logger.warning(f"⚠️ Failed to persist decision: {type(e).__name__}: {e}")
             
-            # Step G: Check watchlist for tx confirmations (non-blocking, non-critical)
+            # Step G: Check watchlist for tx confirmations + RBF/CPFP advisors (non-blocking, non-critical)
             try:
-                confirmed = await check_watchlist(watchlist)
+                confirmed = await check_watchlist(
+                    watchlist,
+                    target_fee_rate=float(decision["recommended_fee"]),
+                )
                 if confirmed > 0:
                     logger.info(f"   📋 Watchlist: {confirmed} tx(s) confirmed this cycle")
             except Exception as e:

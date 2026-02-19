@@ -14,12 +14,14 @@ if _BACKEND_DIR not in sys.path:
     sys.path.insert(0, _BACKEND_DIR)
 
 from src.strategies import compute_slippage, compute_strategy_fees
+from src.strategies.advisors import evaluate_rbf, evaluate_cpfp, ESTIMATED_CHILD_VSIZE
 
 # Load environment variables from root .env
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../../.env"))
 
 # Configuration via environment variables (fully decoupled from backend)
 DUCKDB_PATH = os.getenv("DUCKDB_PATH", "../data/market/mempool_data.duckdb")
+AGENT_HISTORY_PATH = os.getenv("AGENT_HISTORY_PATH", "../data/history/agent_history.duckdb")
 STRATEGY_MODE = os.getenv("STRATEGY_MODE", "PATIENT")
 
 
@@ -162,6 +164,104 @@ if data_available and not trend_df.empty:
     latest_fee = trend_df["Median Fee"].iloc[-1] if len(trend_df) > 0 else None
     if latest_fee is not None and latest_fee < 5.0:
         st.success(f"💎 **Dust Watch: Consolidation Window!** Median fee {latest_fee:.2f} sat/vB < 5 sat/vB — ideal for UTXO cleanup.")
+
+# Fee Advisors (RBF/CPFP) — always visible when watchlist has entries
+try:
+    history_db_path = str(Path(AGENT_HISTORY_PATH).resolve())
+    if Path(history_db_path).exists():
+        hist_conn = duckdb.connect(history_db_path, read_only=True)
+        pending_txs = hist_conn.execute("""
+            SELECT txid, role, fee, fee_rate
+            FROM watchlist
+            WHERE status = 'PENDING'
+            ORDER BY added_at ASC
+        """).fetchall()
+        hist_conn.close()
+
+        if pending_txs:
+            st.subheader(f"📡 FEE ADVISORS — {len(pending_txs)} Tracked Transaction(s)")
+
+            current_fee_rate = fee[0] if (data_available and fee) else 1.0
+            advisor_alerts = []
+            rows = []
+
+            for txid, role, tx_fee, tx_fee_rate in pending_txs:
+                row = {
+                    "TXID": f"{txid[:16]}...",
+                    "Role": f"{'🔄 SENDER' if role == 'SENDER' else '⚡ RECEIVER'}",
+                    "Fee Rate": f"{tx_fee_rate:.1f} sat/vB" if tx_fee_rate else "—",
+                    "Fee": f"{tx_fee:,} sats" if tx_fee else "—",
+                    "Status": "✅ OK",
+                    "Advisory": "—",
+                }
+
+                if tx_fee is None or tx_fee_rate is None or tx_fee_rate <= 0:
+                    row["Status"] = "⏳ Awaiting data"
+                    rows.append(row)
+                    continue
+
+                vsize = tx_fee / tx_fee_rate if tx_fee_rate > 0 else 0
+                if vsize <= 0:
+                    rows.append(row)
+                    continue
+
+                if role == "SENDER":
+                    advice = evaluate_rbf(
+                        original_fee_sats=tx_fee,
+                        original_fee_rate=tx_fee_rate,
+                        original_vsize=vsize,
+                        target_fee_rate=current_fee_rate,
+                    )
+                    if advice.is_stuck:
+                        row["Status"] = "🔴 STUCK"
+                        row["Advisory"] = (
+                            f"RBF → {advice.target_fee_rate:.1f} sat/vB "
+                            f"({advice.target_fee_sats:,} sats)"
+                        )
+                        advisor_alerts.append(
+                            f"🔄 **RBF** `{txid[:16]}...` stuck at "
+                            f"{advice.original_fee_rate:.1f} sat/vB → "
+                            f"recommend **{advice.target_fee_rate:.1f} sat/vB** "
+                            f"({advice.target_fee_sats:,} sats)"
+                        )
+                elif role == "RECEIVER":
+                    advice = evaluate_cpfp(
+                        parent_fee_sats=tx_fee,
+                        parent_vsize=vsize,
+                        target_fee_rate=current_fee_rate,
+                    )
+                    if advice.is_stuck:
+                        row["Status"] = "🔴 STUCK"
+                        row["Advisory"] = (
+                            f"CPFP child: {advice.child_fee_sats:,} sats "
+                            f"(pkg: {advice.package_fee_rate:.1f} sat/vB)"
+                        )
+                        advisor_alerts.append(
+                            f"⚡ **CPFP** `{txid[:16]}...` parent stuck at "
+                            f"{advice.parent_fee_rate:.1f} sat/vB → "
+                            f"child fee: **{advice.child_fee_sats:,} sats** "
+                            f"(package: {advice.package_fee_rate:.1f} sat/vB)"
+                        )
+
+                rows.append(row)
+
+            # Show alerts if any txs are stuck
+            if advisor_alerts:
+                st.warning("⚠️ **Stuck transactions detected:**")
+                for alert in advisor_alerts:
+                    st.markdown(f"  {alert}")
+            else:
+                st.success(f"✅ All {len(pending_txs)} tracked tx(s) are confirming normally (market: {current_fee_rate:.2f} sat/vB)")
+
+            # Always show the watchlist table
+            st.dataframe(
+                pd.DataFrame(rows),
+                hide_index=True,
+                use_container_width=True,
+            )
+
+except Exception:
+    pass  # Non-critical: dashboard continues without advisor panel
 
 st.divider()
 

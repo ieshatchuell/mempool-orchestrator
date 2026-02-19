@@ -1193,3 +1193,63 @@ The WebSocket connection only delivers aggregated data (`stats` + `mempool-block
 - [main.py](backend/src/orchestrator/main.py) — Dust Watch (Step E.2) + Watchlist check (Step G)
 - [frontend/main.py](frontend/app/main.py) — Dust Watch banner
 - [test_watchlist.py](backend/tests/test_watchlist.py) — 19 tests
+
+---
+
+### ADR-014 | RBF & CPFP Fee Advisors
+**Date:** 2026-02-19
+**Status:** IMPLEMENTED
+**Supersedes:** None
+**Completes:** Phase 3 (The Prescriptive Operator)
+
+#### Context
+Phase 3 items 5 (RBF Advisor) and 6 (CPFP Advisor) from the strategy roadmap. When a tracked transaction is stuck in the mempool, the orchestrator should calculate the optimal replacement or child fee based on the user's role:
+- **SENDER** → RBF (Replace-By-Fee): Sign a new tx replacing the original with higher fee.
+- **RECEIVER** → CPFP (Child-Pays-For-Parent): Create a child tx spending the unconfirmed output with enough fee to incentivize miners.
+
+**Key Architectural Constraint:** Advisors use the `recommended_fee` from `evaluate_market_rules()`, NOT the raw mempool median. This ensures fee calculations respect the active strategy mode (PATIENT or RELIABLE).
+
+#### Decision
+
+**Module Refactor:**
+- `src/strategies.py` → `src/strategies/__init__.py` (package). All 3 existing import sites remain valid.
+- New `src/strategies/advisors.py` — pure deterministic functions, zero I/O, fully testable.
+
+**RBF Advisor (Sender, BIP-125):**
+- Stuck detection: `original_fee_rate < target_fee_rate`
+- Rate rule: `new_rate = max(target_rate, original_rate + 1.0)` (MinRelayTxFee relay rule)
+- Fee calculation: `target_fee_sats = ceil(new_rate * vsize)`
+- **BIP-125 Rule 3 guard:** `target_fee_sats = max(target_fee_sats, original_fee_sats + 1)` — absolute fee must be strictly greater
+- Floor: rate never below 1 sat/vB
+
+**CPFP Advisor (Receiver, Package Relay):**
+- Stuck detection: `parent_fee_rate < target_fee_rate`
+- Package formula: `child_fee = ceil(target_rate × (parent_vsize + child_vsize)) - parent_fee`
+- Floor: `child_fee ≥ ceil(MIN_RELAY_FEE_RATE × child_vsize)` — child must be independently relayable
+- Package rate: `(parent_fee + child_fee) / (parent_vsize + child_vsize)`
+- Constant: `ESTIMATED_CHILD_VSIZE = 141.0` (P2WPKH spend)
+
+**Integration:**
+- `watchlist_monitor.py`: `check_watchlist()` gains `target_fee_rate` parameter. For each pending tx, extracts `fee` + `weight` from API response, computes `vsize = weight/4` (BIP-141), and dispatches to `evaluate_rbf()` or `evaluate_cpfp()` based on role.
+- `main.py` Step G: Passes `decision["recommended_fee"]` to the monitor — this is the fee the orchestrator computed in the current cycle.
+- Dashboard: Fee Advisors panel shows alerts for stuck watchlist txs.
+
+#### Consequences
+- **Good:** Prescriptive alerts with exact fee amounts — users know how much to pay.
+- **Good:** Advisors respect PATIENT/RELIABLE mode — no conflict with the strategy engine.
+- **Good:** Pure functions are independently testable (19 tests, 0 mocks).
+- **Good:** BIP-125 Rule 3 guard prevents node rejection on edge cases.
+- **Neutral:** Advisory-only — no wallet integration, no automatic signing.
+- **Risk:** Mempool.space API rate limit (~10 req/min). Mitigated by processing one tx per cycle.
+
+#### Verification
+- 149 total tests passing (19 new + 130 existing).
+- E2E validated: SENDER RBF alert at 2.4 sat/vB → 5.0 sat/vB, RECEIVER CPFP alert at 1.3 sat/vB → child fee 1341 sats.
+- Non-stuck txs correctly show "fee OK" debug messages.
+
+#### Related Files
+- [advisors.py](backend/src/strategies/advisors.py) — Pure RBF/CPFP functions
+- [watchlist_monitor.py](backend/src/orchestrator/watchlist_monitor.py) — Integration + `_run_advisor()`
+- [main.py](backend/src/orchestrator/main.py) — Step G with `target_fee_rate` injection
+- [frontend/main.py](frontend/app/main.py) — Fee Advisors dashboard panel
+- [test_advisors.py](backend/tests/test_advisors.py) — 19 tests
