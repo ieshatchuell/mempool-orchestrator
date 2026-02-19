@@ -4,6 +4,12 @@ Non-blocking polling loop that runs alongside the orchestrator's decision cycle.
 For each PENDING tx in the watchlist, checks `GET /api/tx/{txid}` and updates
 status to CONFIRMED when mined.
 
+Phase 3 Addition:
+- RBF Advisor (SENDER): If tx is stuck, calculates optimal replacement fee (BIP-125).
+- CPFP Advisor (RECEIVER): If tx is stuck, calculates child fee to unstick (Package Relay).
+- Both advisors use `target_fee_rate` from `evaluate_market_rules()` to respect
+  the active strategy mode (PATIENT/RELIABLE).
+
 Design:
 - Uses httpx async client for non-blocking HTTP
 - Rate-limited: processes one tx per call to avoid API abuse
@@ -16,6 +22,7 @@ from loguru import logger
 
 from src.config import settings
 from src.storage.watchlist import Watchlist
+from src.strategies.advisors import evaluate_rbf, evaluate_cpfp
 
 
 # Shared httpx client (lazy init)
@@ -33,16 +40,20 @@ async def _get_client() -> httpx.AsyncClient:
     return _client
 
 
-async def check_watchlist(watchlist: Watchlist) -> int:
+async def check_watchlist(watchlist: Watchlist, target_fee_rate: float = 1.0) -> int:
     """Poll mempool.space for status updates on all PENDING transactions.
     
     For each PENDING tx:
     1. GET /api/tx/{txid} from mempool.space
     2. If status.confirmed == true → mark_confirmed() in DB
-    3. If API error → skip (will retry next cycle)
+    3. If still pending → run RBF/CPFP advisor based on role
+    4. If API error → skip (will retry next cycle)
     
     Args:
         watchlist: Watchlist persistence instance.
+        target_fee_rate: Recommended fee rate from evaluate_market_rules().
+            Used as the target for RBF/CPFP calculations. Defaults to 1.0
+            (minrelaytxfee) if not provided.
         
     Returns:
         Number of newly confirmed transactions this cycle.
@@ -70,10 +81,8 @@ async def check_watchlist(watchlist: Watchlist) -> int:
                 watchlist.mark_confirmed(entry.txid, block_height)
                 confirmed_count += 1
             else:
-                logger.debug(
-                    f"   ⏳ {entry.txid[:16]}... still pending "
-                    f"(role={entry.role})"
-                )
+                # Tx still pending — run fee advisor
+                _run_advisor(entry, tx_data, target_fee_rate)
                 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
@@ -95,6 +104,82 @@ async def check_watchlist(watchlist: Watchlist) -> int:
         )
     
     return confirmed_count
+
+
+def _run_advisor(entry, tx_data: dict, target_fee_rate: float) -> None:
+    """Run the appropriate fee advisor for a pending transaction.
+    
+    Extracts fee and vsize from the API response and dispatches to
+    evaluate_rbf() or evaluate_cpfp() based on the entry's role.
+    
+    Non-critical: all errors are caught and logged as warnings.
+    
+    Args:
+        entry: WatchlistRecord with txid, role, etc.
+        tx_data: Raw JSON response from GET /api/tx/{txid}.
+        target_fee_rate: Target fee rate from evaluate_market_rules().
+    """
+    try:
+        fee_sats = tx_data.get("fee")
+        weight = tx_data.get("weight")
+        
+        if fee_sats is None or weight is None:
+            logger.debug(
+                f"   ⏳ {entry.txid[:16]}... still pending "
+                f"(role={entry.role}, missing fee/weight data)"
+            )
+            return
+        
+        # vsize = weight / 4 (BIP-141)
+        vsize = weight / 4.0
+        if vsize <= 0:
+            return
+        
+        fee_rate = fee_sats / vsize
+        
+        if entry.role == "SENDER":
+            advice = evaluate_rbf(
+                original_fee_sats=fee_sats,
+                original_fee_rate=fee_rate,
+                original_vsize=vsize,
+                target_fee_rate=target_fee_rate,
+            )
+            if advice.is_stuck:
+                logger.warning(
+                    f"   🔄 RBF Advisor: {entry.txid[:16]}... stuck at "
+                    f"{advice.original_fee_rate:.1f} sat/vB → "
+                    f"recommend {advice.target_fee_rate:.1f} sat/vB "
+                    f"({advice.target_fee_sats} sats total)"
+                )
+            else:
+                logger.debug(
+                    f"   ✅ {entry.txid[:16]}... fee OK at "
+                    f"{fee_rate:.1f} sat/vB (target: {target_fee_rate:.1f})"
+                )
+                
+        elif entry.role == "RECEIVER":
+            advice = evaluate_cpfp(
+                parent_fee_sats=fee_sats,
+                parent_vsize=vsize,
+                target_fee_rate=target_fee_rate,
+            )
+            if advice.is_stuck:
+                logger.warning(
+                    f"   ⚡ CPFP Advisor: {entry.txid[:16]}... parent stuck at "
+                    f"{advice.parent_fee_rate:.1f} sat/vB → "
+                    f"child fee needed: {advice.child_fee_sats} sats "
+                    f"(package rate: {advice.package_fee_rate:.1f} sat/vB)"
+                )
+            else:
+                logger.debug(
+                    f"   ✅ {entry.txid[:16]}... parent fee OK at "
+                    f"{fee_rate:.1f} sat/vB (target: {target_fee_rate:.1f})"
+                )
+    except Exception as e:
+        logger.warning(
+            f"   ⚠️ Advisor failed for {entry.txid[:16]}...: "
+            f"{type(e).__name__}: {e}"
+        )
 
 
 async def close_client() -> None:
