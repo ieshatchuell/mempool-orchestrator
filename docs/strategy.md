@@ -39,8 +39,8 @@ The project addresses the auction market for Bitcoin block space.
 - ~~**[Core] Dual-Mode Strategy:** PATIENT (Orchestrator, -27.7%, for treasury) vs RELIABLE (EMA-20, -4.9%, for time-sensitive ops).~~ ✅ Done (ADR-012)
 - ~~**[Signal] EMA Hybrid:** Integrate EMA as secondary signal in orchestrator for urgency estimation.~~ ✅ Done (ADR-012)
 - ~~**[Feature] Watchlist Module:** Allow tracking specific TXIDs (without wallet connection).~~ ✅ Done (ADR-013)
-- **[Feature] RBF Advisor (Sender Strategy):** Alert if a tracked tx is stuck and calculate optimal replacement fee.
-- **[Feature] CPFP Advisor (Receiver Strategy):** Alert if an incoming payment is stuck and calculate child-fee to unstick it.
+- ~~**[Feature] RBF Advisor (Sender Strategy):** Alert if a tracked tx is stuck and calculate optimal replacement fee.~~ ✅ Done (ADR-014)
+- ~~**[Feature] CPFP Advisor (Receiver Strategy):** Alert if an incoming payment is stuck and calculate child-fee to unstick it.~~ ✅ Done (ADR-014)
 - ~~**[Feature] Dust Watch:** Alert when fees dip below 5 sats/vB for UTXO consolidation windows.~~ ✅ Done (ADR-013)
 
 ### Phase 4: Scalability & UX — ☁️ Q3 2026
@@ -54,4 +54,4 @@ The project addresses the auction market for Bitcoin block space.
 
 ---
 **Lead Engineer:** Israel (@ieshatchuell)
-**Status:** Phase 3 In Progress 🔄. Dual-Mode, EMA, Watchlist, Dust Watch done. RBF/CPFP remaining.
+**Status:** Phase 3 COMPLETED ✅. All items done (Dual-Mode, EMA, Watchlist, Dust Watch, RBF Advisor, CPFP Advisor). Phase 4 next.
