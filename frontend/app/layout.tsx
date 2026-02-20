@@ -1,7 +1,6 @@
 import type { Metadata, Viewport } from 'next'
 import { Inter, Geist_Mono } from 'next/font/google'
 import { ThemeProvider } from 'next-themes'
-import { Analytics } from '@vercel/analytics/next'
 import './globals.css'
 
 const _inter = Inter({ subsets: ["latin"] })
@@ -9,8 +8,7 @@ const _geistMono = Geist_Mono({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
   title: 'Mempool Orchestrator',
-  description: 'Bitcoin Mempool Orchestrator Dashboard — Real-time fee intelligence and transaction management for data engineers.',
-  generator: 'v0.app',
+  description: 'Real-time Bitcoin transaction intelligence. Estimate RBF and CPFP fees accurately.',
   icons: {
     icon: [
       {
@@ -54,7 +52,6 @@ export default function RootLayout({
         >
           {children}
         </ThemeProvider>
-        <Analytics />
       </body>
     </html>
   )
