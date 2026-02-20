@@ -67,13 +67,19 @@ orchestrator:
     cd backend && uv run python -m src.orchestrator.main
 
 # ==========================================
-# FRONTEND (Streamlit UI)
+# FRONTEND (Next.js via Docker)
 # ==========================================
 
-# Launch the analytics dashboard
+# Launch the analytics dashboard (ephemeral Docker container)
 dashboard:
-    @echo "🚀 Launching Mempool Dashboard..."
-    cd frontend && uv run streamlit run app/main.py
+    @echo "{{green}}🚀 Launching Mempool Dashboard (Docker)...{{reset}}"
+    @sh -c "sleep 4 && open http://localhost:3000" &
+    docker run --rm -it \
+        -v {{justfile_directory()}}/frontend:/app \
+        -w /app \
+        -p 3000:3000 \
+        node:20-alpine \
+        sh -c "npm install && npm run dev -- -H 0.0.0.0"
 
 # ==========================================
 # TESTING
@@ -91,20 +97,16 @@ test:
 # Run a full system health check (Python env + Docker connectivity)
 check:
     @echo "{{green}}🛠️  Performing System Health Check...{{reset}}"
-    @echo "\n[1/3] Backend Python Environment (via UV):"
+    @echo "\n[1/2] Backend Python Environment (via UV):"
     @cd backend && uv run python --version
-    @echo "\n[2/3] Frontend Python Environment (via UV):"
-    @cd frontend && uv run python --version
-    @echo "\n[3/3] Infra Status:"
+    @echo "\n[2/2] Infra Status:"
     @cd infra && docker compose ps
 
-# Sync dependencies in both workspaces
+# Sync backend dependencies (frontend deps managed via Docker)
 sync:
     @echo "{{green}}📦 Syncing Backend dependencies...{{reset}}"
     cd backend && uv sync
-    @echo "{{green}}📦 Syncing Frontend dependencies...{{reset}}"
-    cd frontend && uv sync
-    @echo "{{green}}✅ All dependencies synced.{{reset}}"
+    @echo "{{green}}✅ Backend dependencies synced.{{reset}}"
 
 # Debug the DuckDB database
 debug-db:
