@@ -82,6 +82,15 @@ dashboard:
         sh -c "npm install && npm run dev -- -H 0.0.0.0"
 
 # ==========================================
+# API SERVER (FastAPI — read-only DuckDB)
+# ==========================================
+
+# Start the FastAPI data layer on port 8000
+api:
+    @echo "{{green}}🔌 Starting FastAPI API server (port 8000)...{{reset}}"
+    cd backend && uv run uvicorn src.api.main:app --reload --port 8000
+
+# ==========================================
 # TESTING
 # ==========================================
 

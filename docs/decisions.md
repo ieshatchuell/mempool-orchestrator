@@ -1253,3 +1253,101 @@ Phase 3 items 5 (RBF Advisor) and 6 (CPFP Advisor) from the strategy roadmap. Wh
 - [main.py](backend/src/orchestrator/main.py) — Step G with `target_fee_rate` injection
 - [frontend/main.py](frontend/app/main.py) — Fee Advisors dashboard panel
 - [test_advisors.py](backend/tests/test_advisors.py) — 19 tests
+
+---
+
+## ADR-013: CQRS — DuckDB + Redis Read Layer
+
+- **Date:** 2026-02-21
+- **Status:** ✅ IMPLEMENTED
+- **Supersedes:** ADR-004 (Read-Only Volume Strategy — now partially obsolete for the API)
+- **Phase:** Phase 4 — Frontend Migration (Milestone 2.5)
+
+### Context
+
+During Milestone 2 (FastAPI Data Layer), we discovered that the API server could not read from `mempool_data.duckdb` while the Storage Consumer was writing to it. DuckDB enforces process-level exclusive file locks — only one process can hold a R/W connection. `read_only=True` from a second process fails when the WAL is active.
+
+This blocked the entire frontend migration: `just api` returned **500 Internal Server Errors** on every endpoint because `duckdb.connect(path, read_only=True)` raised a WAL lock conflict.
+
+### Options Evaluated
+
+| # | Architecture | Write | Read | Concurrency | Infra | Refactor | Verdict |
+|---|---|---|---|---|---|---|---|
+| A | PostgreSQL | ★★★ | ★★ | ✅ | 512 MB | 🔴 High | Fixes concurrency, kills read speed |
+| B | ClickHouse | ★★★★ | ★★★★ | ✅ | 1 GB+ | 🔴 High | Overkill for <1 GB data |
+| C | DuckDB + SQLite (WAL) | ★★ | ★★★ | ⚠️ | 0 | 🟡 Med | Fragile scanner bridge |
+| **D** | **CQRS: DuckDB + Redis** | **★★★★** | **★★★★★** | **✅** | **50 MB** | **🟢 Low** | **Selected** |
+| E | QuestDB | ★★★★★ | ★★★★ | ✅ | 256 MB | 🔴 High | Best if starting from zero |
+| F | Kafka dual-consumer → Redis | ★★★★ | ★★★★★ | ✅ | 50 MB | 🟡 Med | Duplicates parsing logic |
+
+### Decision
+
+**CQRS: DuckDB remains the write-optimized OLAP store (source of truth). Redis serves as the read-optimized in-memory layer for the API.**
+
+**Projection mechanism: Post-Flush Hook (Option A)**
+
+The `DuckDBConsumer._project_to_redis()` method runs inside the consumer process after each `_flush_to_db()` call. It reuses the same R/W connection (`self.db_conn`) — MVCC guarantees consistent reads within the same process. A separate Kafka consumer projector (Option B) was rejected because it would duplicate parsing logic and need to self-maintain state for EMA/median calculations.
+
+### Implementation
+
+**Files Modified:**
+
+| File | Change |
+|---|---|
+| `config.py` | +`redis_url` setting (default: `redis://localhost:6379/0`) |
+| `duckdb_consumer.py` | +`_project_to_redis()` post-flush hook, Redis client init/cleanup |
+| `api/main.py` | Full rewrite — reads from Redis, cache-miss defaults (never 500) |
+| `docker-compose.yml` | +`redis:alpine` service (port 6379, healthcheck) |
+| `test_api_server.py` | Full rewrite — `fakeredis` replaces DuckDB fixtures |
+
+**Data Flow:**
+```
+Kafka → DuckDBConsumer → DuckDB (R/W)
+                │
+                └─ _project_to_redis() → Redis SET (5 keys, ~10 KB total)
+
+FastAPI → Redis GET → JSON → Pydantic validation → Response
+          └─ cache miss? → return empty-state default (never 500)
+```
+
+**Redis Keys:**
+
+| Key | Content |
+|---|---|
+| `dashboard:mempool_stats` | KPIs, deltas |
+| `dashboard:fee_distribution` | 7 fee bands |
+| `dashboard:recent_blocks` | Last 10 blocks |
+| `dashboard:orchestrator_status` | Strategy, EMA, traffic |
+| `dashboard:watchlist` | Advisories (RBF/CPFP) |
+
+### Consequences
+
+**Positive:**
+1. **Zero lock conflicts** — read and write paths never touch the same file.
+2. **Sub-millisecond reads** — Redis in-memory vs 10-50ms DuckDB disk scans.
+3. **Minimal refactor** — `queries.py` and `schemas.py` unchanged.
+4. **Graceful degradation** — Redis down? DuckDB writes continue. API returns empty defaults.
+5. **< 10 KB memory** — all dashboard data fits in trivial Redis footprint.
+
+**Trade-offs:**
+1. **Eventual consistency** — dashboard data lags by one flush cycle (~5-10 seconds).
+2. **Redis container** — adds ~50 MB RAM to infrastructure.
+3. **Projection coupling** — consumer does two things (write + project).
+
+### Verification
+
+```bash
+cd backend && uv run pytest -v  # 170 passed in 0.73s
+```
+
+- `just storage`: `📡 Dashboard projected to Redis.` logged every cycle.
+- `just api`: All 5 endpoints return 200 with live data.
+- Cache-miss tests: All endpoints return valid empty state (no 500s).
+
+### Related Files
+- [duckdb_consumer.py](backend/src/storage/duckdb_consumer.py) — Post-flush projector
+- [api/main.py](backend/src/api/main.py) — Redis-only API server
+- [config.py](backend/src/config.py) — `redis_url` setting
+- [docker-compose.yml](infra/docker-compose.yml) — Redis service
+- [test_api_server.py](backend/tests/test_api_server.py) — 21 tests with fakeredis
+

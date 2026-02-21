@@ -3,12 +3,21 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List
+
 import duckdb
+import redis
 from confluent_kafka import Consumer, KafkaError
 from pydantic import ValidationError
 
 from src.config import settings
 from src.schemas import MempoolStats, MempoolBlock, ConfirmedBlock
+from src.api.queries import (
+    query_mempool_stats,
+    query_fee_distribution,
+    query_recent_blocks,
+    query_orchestrator_status,
+    query_watchlist_advisories,
+)
 
 
 class DuckDBConsumer:
@@ -38,6 +47,12 @@ class DuckDBConsumer:
         self.db_conn = duckdb.connect(str(db_path))
         self._init_db()
         self.buffer = []
+
+        # Redis client for CQRS projection (dashboard read layer)
+        self._redis = redis.Redis.from_url(
+            settings.redis_url,
+            decode_responses=True,
+        )
 
     def _init_db(self):
         """Creates structured tables for mempool data."""
@@ -208,6 +223,10 @@ class DuckDBConsumer:
             print(f"Final flush: {len(self.buffer)} records.")
             self._flush_to_db()
         
+        if hasattr(self, '_redis'):
+            self._redis.close()
+            print("🔴 Redis connection closed.")
+        
         if hasattr(self, 'db_conn'):
             self.db_conn.close()
             print("🔒 DuckDB connection closed.")
@@ -259,10 +278,65 @@ class DuckDBConsumer:
 
             # Only commit Kafka offset after successful DB writes
             self.consumer.commit()
+            self._project_to_redis()
             self.buffer = []
 
         except Exception as e:
             print(f"❌ CRITICAL: Failed to persist batch to DuckDB: {e}")
+
+    def _project_to_redis(self):
+        """Project dashboard views from DuckDB to Redis after each flush.
+
+        Uses the same self.db_conn (R/W) — MVCC guarantees consistent reads
+        of committed data within the same process. Non-critical: if Redis is
+        unreachable, DuckDB writes are unaffected.
+        """
+        try:
+            # Market data projections (same connection that just wrote)
+            self._redis.set(
+                "dashboard:mempool_stats",
+                json.dumps(query_mempool_stats(self.db_conn)),
+            )
+            self._redis.set(
+                "dashboard:fee_distribution",
+                json.dumps(query_fee_distribution(self.db_conn)),
+            )
+            self._redis.set(
+                "dashboard:recent_blocks",
+                json.dumps(query_recent_blocks(self.db_conn, limit=10)),
+            )
+
+            status = query_orchestrator_status(self.db_conn)
+            self._redis.set(
+                "dashboard:orchestrator_status",
+                json.dumps(status),
+            )
+
+            # Watchlist projection (separate DB — read_only, opened briefly)
+            try:
+                history_path = str(Path(settings.agent_history_path).resolve())
+                history_conn = duckdb.connect(history_path, read_only=True)
+                try:
+                    target_fee = status.get("current_median_fee", 1.0)
+                    watchlist_data = query_watchlist_advisories(
+                        history_conn, target_fee,
+                    )
+                    self._redis.set(
+                        "dashboard:watchlist",
+                        json.dumps(watchlist_data),
+                    )
+                finally:
+                    history_conn.close()
+            except Exception:
+                # Watchlist DB may not exist yet — not critical
+                pass
+
+            print("📡 Dashboard projected to Redis.")
+
+        except redis.ConnectionError:
+            print("⚠️ Redis unreachable — skipping projection (DuckDB writes OK)")
+        except Exception as e:
+            print(f"⚠️ Projection error: {e}")
 
 
 if __name__ == "__main__":
