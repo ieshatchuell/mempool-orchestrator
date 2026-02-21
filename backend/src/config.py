@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     # Strategy Mode - Controls orchestrator fee logic
     strategy_mode: Literal["PATIENT", "RELIABLE"] = "PATIENT"
 
+    # Redis - CQRS read layer (dashboard projections)
+    redis_url: str = "redis://localhost:6379/0"
+
     model_config = SettingsConfigDict(
         env_file=".env", 
         env_file_encoding="utf-8",

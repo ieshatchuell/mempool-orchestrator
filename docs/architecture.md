@@ -1,7 +1,7 @@
 # System Architecture
 
-## 1. High-Level Data Flow (V5)
-The system follows a **Decoupled Monorepo** pattern combining local processes for speed with containerized AI for isolation. The Frontend (Streamlit) is physically separated from the Backend (Data Engineering) to enable future migration to React without breaking pipelines.
+## 1. High-Level Data Flow (V6)
+The system follows a **Decoupled Monorepo + CQRS** pattern. Local processes handle ingestion and storage, containerized AI handles inference, and Redis serves as the read-optimized layer for the dashboard API. The Frontend (Next.js) is physically separated from the Backend (Data Engineering).
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -9,43 +9,59 @@ The system follows a **Decoupled Monorepo** pattern combining local processes fo
 │                                                                 │
 │  [External WebSocket: mempool.space]                            │
 │        │                                                        │
-│        v (Async Streaming - "Radar")                            │
+│        v (Async Streaming — "Radar")                            │
 │  [Ingestor: backend/src/ingestors/mempool_ws]                   │
-│        │                                                        │
-│        v (Internal Library)                                     │
-│  [Producer: backend/src/common/kafka_producer]                  │
 │        │                                                        │
 │        v (Kafka Protocol)                                       │
 │  ┌─────────────────┐    ┌──────────────────────────────────┐    │
 │  │ Redpanda        │    │ data/market/mempool_data.duckdb  │    │
 │  │ (Docker)        │───▶│ (Write Lock: Local Process)      │    │
 │  └─────────────────┘    └────────────┬─────────────────────┘    │
-│                                      │                          │
-└──────────────────────────────────────│──────────────────────────┘
-                                       │ :ro volume mount
-┌──────────────────────────────────────│──────────────────────────┐
-│                     DOCKER NETWORK   │                          │
+│                                      │ _project_to_redis()      │
 │                                      v                          │
+│                         ┌──────────────────────────────────┐    │
+│                         │ Redis (Docker — Alpine)          │    │
+│                         │ dashboard:* keys (~10 KB)        │    │
+│                         └────────────┬─────────────────────┘    │
+│                                      │                          │
+│                                      v                          │
+│                         ┌──────────────────────────────────┐    │
+│                         │ FastAPI (localhost:8000)          │    │
+│                         │ Redis GET → JSON → Response       │    │
+│                         └────────────┬─────────────────────┘    │
+│                                      │                          │
+│                                      v                          │
+│                         ┌──────────────────────────────────┐    │
+│                         │ Next.js Dashboard (:3000)        │    │
+│                         └──────────────────────────────────┘    │
+│                                                                 │
+└──────────────────────────────────┬──────────────────────────────┘
+                                   │ :ro volume mount
+┌──────────────────────────────────│──────────────────────────────┐
+│                     DOCKER NETWORK                              │
+│                                  v                              │
 │  ┌─────────────────┐    ┌──────────────────────────────────┐    │
 │  │ Ollama          │◀───│ Orchestrator                     │    │
 │  │ (Llama 3.2)     │    │ (Read-Only DuckDB Access)        │    │
 │  └─────────────────┘    └──────────────────────────────────┘    │
-│                                      │                          │
-│                                      v :rw volume mount         │
+│                                  │                              │
+│                                  v :rw volume mount             │
 │                         ┌──────────────────────────────────┐    │
 │                         │ data/history/agent_history.duckdb│    │
 │                         └──────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Concurrency Pattern: Writer + Reader Isolation
+### CQRS Concurrency Pattern
 
-| Component | Runtime | Access Mode | Purpose |
-|-----------|---------|-------------|---------|
-| Storage Consumer | Local (uv) | **Write** | Kafka → DuckDB persistence |
-| AI Orchestrator | Docker | **Read-Only** | Query DuckDB via `:ro` mount |
+| Component | Runtime | Access | Target | Purpose |
+|-----------|---------|--------|--------|---------|
+| Storage Consumer | Local (uv) | **Write** | DuckDB | Kafka → DuckDB persistence |
+| Storage Consumer | Local (uv) | **Write** | Redis | Post-flush projection (dashboard views) |
+| FastAPI API | Local (uv) | **Read** | Redis | Sub-ms dashboard reads |
+| AI Orchestrator | Docker | **Read-Only** | DuckDB | Query via `:ro` mount |
 
-> **Critical:** The Orchestrator uses `read_only=True` when connecting to DuckDB, preventing write lock conflicts with the local Storage process.
+> **Critical (ADR-013):** FastAPI never touches DuckDB. The Storage Consumer projects pre-computed dashboard views to Redis after each flush. This eliminates the DuckDB file-lock conflict entirely.
 
 [External REST API: mempool.space/api]
       |
@@ -97,19 +113,20 @@ The Radar pattern provides a lightweight, metadata-first approach to ingesting B
   - `get_block_stats(block_hash: str) -> dict`: Fetch block header data from `/block/{hash}`.
 - **Testing:** Comprehensive test suite (`tests/test_api.py`) using `respx` to mock HTTP requests (13 tests).
 
-### D. The Dashboard
-- **Purpose:** Real-time observability and data auditing interface.
-- **Implementation:** `frontend/app/main.py`
-  - **Framework:** Streamlit for rapid interactive UI development.
-  - **Data Source:** Read-only connection to `data/market/mempool_data.duckdb`.
-  - **Decoupling:** Fully independent from backend; uses `os.getenv()` for configuration.
-  - **Features:**
-    - **KPIs:** Mempool size (txs), current median fee (sat/vB), pending fees (BTC), blocks to clear.
-    - **Blocks Table:** Last 10 projected blocks (`block_index=0`) with fees, tx count, and block size.
-    - **Fee Trend Chart:** Historical `median_fee` from confirmed blocks (`block_history`).
-    - **Strategy Simulator:** Interactive strategy selector (SMA-20, EMA-20, Orchestrator) with overlay chart comparing strategy recommendations against actual fees, plus KPIs (cumulative cost, slippage, hit rate). Powered by `src.strategies` module.
-    - **Graceful Degradation:** Shows offline status and guidance when DuckDB is unavailable.
-- **Launch:** `just dashboard`
+### D. The Dashboard API (CQRS Read Layer)
+- **Purpose:** Low-latency data access for the Next.js frontend.
+- **Architecture:** CQRS — DuckDB writes, Redis reads (ADR-013).
+- **Write Side:** `DuckDBConsumer._project_to_redis()` runs after each flush, computing dashboard views from DuckDB and writing them to 5 Redis keys.
+- **Read Side:** FastAPI endpoints do `Redis GET → JSON → Pydantic validation → Response`.
+- **Cache Miss:** If Redis has no data (projector not yet run), endpoints return valid empty-state defaults — never a 500.
+- **Redis Keys:**
+  - `dashboard:mempool_stats` — KPIs, 1h deltas
+  - `dashboard:fee_distribution` — 7 fee bands
+  - `dashboard:recent_blocks` — Last 10 confirmed blocks
+  - `dashboard:orchestrator_status` — Strategy mode, EMA, traffic
+  - `dashboard:watchlist` — RBF/CPFP advisories
+- **Total Redis footprint:** < 10 KB.
+- **Launch:** `just api` (FastAPI on port 8000)
 
 ### E. The Orchestrator (Neuro-Symbolic Brain)
 
@@ -177,6 +194,7 @@ The AI acts as a **non-critical sidecar**:
   - `duckdb_path`: Database file path
   - `duckdb_batch_size`: Batch flush size
   - `agent_history_path`: Agent decision history database
+  - `redis_url`: Redis connection URL (CQRS read layer)
 
 ### G. Persistence Layer (Strict Data Isolation)
 
@@ -223,7 +241,8 @@ The system implements a **Strict Data Isolation** pattern with physically separa
     - `tests/test_config.py`: Environment variable loading and validation.
     - `tests/test_api.py`: REST API client behavior.
     - `tests/test_agent_history.py`: Agent decision persistence.
-    - *66 total tests.*
+    - `tests/test_api_server.py`: FastAPI endpoints (fakeredis).
+    - *170 total tests.*
 
 ## 5. Architectural Patterns
 
