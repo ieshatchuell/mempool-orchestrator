@@ -5,10 +5,12 @@ An agentic data platform designed to ingest, process, and optimize Bitcoin mempo
 ## Tech Stack
 - **Runtime:** Python 3.12+ (managed by `uv`)
 - **Event Broker:** Redpanda (Kafka-compatible)
-- **Database:** DuckDB (OLAP Storage)
+- **OLAP Database:** DuckDB (Write-optimized OLAP storage)
+- **Read Cache:** Redis (CQRS read layer for dashboard API)
+- **Web API:** FastAPI (Redis-backed, sub-ms reads)
+- **Frontend:** Next.js + shadcn/ui (React dashboard)
 - **AI/LLM:** Ollama + Llama 3.2 (Local Inference)
 - **Agent Framework:** PydanticAI (Structured Workflows)
-- **Analytics UI:** Streamlit (Real-time Dashboard)
 - **Data Science:** Pandas / NumPy (Auditing & Analysis)
 - **Infrastructure:** Docker / OrbStack
 - **IDE:** Antigravity (Gemini 3)
@@ -94,7 +96,7 @@ cd frontend && uv sync
 
 ### Commands
 ```bash
-# 1. Start Infrastructure (Redpanda)
+# 1. Start Infrastructure (Redpanda + Redis)
 just infra-up
 
 # 2. System Health Check
@@ -103,22 +105,25 @@ just check
 # 3. Launch Ingestion Pipeline (The "Radar")
 just radar
 
-# 4. Launch Storage Consumer (The "Vault")
+# 4. Launch Storage Consumer (The "Vault" → DuckDB + Redis projection)
 just storage
 
-# 5. Launch Analytics Dashboard
+# 5. Launch API Server (reads from Redis)
+just api
+
+# 6. Launch Next.js Dashboard
 just dashboard
 
-# 6. Start AI Infrastructure (Ollama + Orchestrator)
+# 7. Start AI Infrastructure (Ollama + Orchestrator)
 just ai-up
 
-# 7. View Orchestrator Logs
+# 8. View Orchestrator Logs
 just ai-logs
 
-# 8. Stop AI Infrastructure
+# 9. Stop AI Infrastructure
 just ai-down
 
-# 9. Stop Infrastructure
+# 10. Stop Infrastructure
 just infra-down
 ```
 
@@ -126,23 +131,25 @@ just infra-down
 
 The system implements a **Hybrid Architecture** combining local processes for speed with containerized AI for isolation.
 
-### 1. Hybrid Architecture
+### 1. CQRS Hybrid Architecture
 
 | Layer | Runtime | Purpose |
 |-------|---------|--------|
 | **Ingestion** | Local (uv) | Low-latency WebSocket streaming |
-| **Storage** | Local (uv) | DuckDB writes with file locking |
+| **Storage** | Local (uv) | DuckDB writes + Redis projection |
+| **API** | Local (uv) | FastAPI reads from Redis (sub-ms) |
 | **AI Orchestrator** | Docker | Isolated LLM inference environment |
 | **Ollama** | Docker | Local Llama 3.2 model serving |
 
-> **Critical Pattern:** The Dockerized Orchestrator reads `mempool_data.duckdb` via a **Read-Only Volume Mount** (`:ro`) while the local Storage process writes to it. This prevents file locking conflicts.
+> **Architecture (ADR-013):** FastAPI never touches DuckDB. After each batch write, the Storage Consumer projects pre-computed dashboard views to Redis (~10 KB). The API serves these projections with sub-millisecond latency. If Redis has no data (cold start), the API returns valid empty-state defaults.
 
 ### 2. Data Flow
 - **Radar (WebSocket):** Real-time signals from `mempool.space` for mempool stats and projected blocks.
 - **Fetcher (REST API):** On-demand fetching of confirmed block data for auditing and backfill.
-- **Vault (DuckDB):** Typed storage with Pydantic validation at ingestion boundary.
+- **Vault (DuckDB):** Typed OLAP storage with Pydantic validation at ingestion boundary.
+- **Redis (CQRS):** In-memory read layer. Storage projects 5 dashboard views after each flush.
+- **API (FastAPI):** Reads from Redis, validates with Pydantic, serves JSON to the Next.js frontend.
 - **Brain (Orchestrator):** Neuro-Symbolic agent: Python computes decisions, Llama 3.2 generates explanations.
-- **Agent Memory:** Dedicated `agent_history.duckdb` for storing decision logs (Action, Reasoning, Fee) to ensure auditability and avoid write conflicts.
 - **Watchlist:** Track specific TXIDs by role (SENDER/RECEIVER). REST polling via `GET /api/tx/{txid}` detects confirmations.
 - **Dust Watch:** Alerts when EMA fee drops below 5 sat/vB — signals a UTXO consolidation window.
 - **RBF Advisor:** When a tracked SENDER tx is stuck, calculates the optimal replacement fee (BIP-125). Uses `recommended_fee` from the strategy engine.
