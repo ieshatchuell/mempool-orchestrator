@@ -1,4 +1,3 @@
-from typing import Literal
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -12,7 +11,6 @@ class Settings(BaseSettings):
         mempool_topic (str): Target Kafka topic for mempool events.
         mempool_ws_url (str): Source WebSocket URL for real-time mempool data.
         mempool_api_url (str): Base URL for Mempool.space REST API.
-        strategy_mode (str): PATIENT (treasury, saves 27.7%) or RELIABLE (time-sensitive, 94% hit rate).
     """
     kafka_bootstrap_servers: str = "localhost:9092"
     mempool_topic: str = "mempool-raw"
@@ -25,9 +23,6 @@ class Settings(BaseSettings):
 
     # Agent History - Separate DB to avoid file lock conflicts
     agent_history_path: str = "../data/history/agent_history.duckdb"
-
-    # Strategy Mode - Controls orchestrator fee logic
-    strategy_mode: Literal["PATIENT", "RELIABLE"] = "PATIENT"
 
     # Redis - CQRS read layer (dashboard projections)
     redis_url: str = "redis://localhost:6379/0"

@@ -25,20 +25,8 @@ SEED_MEMPOOL_STATS = {
     "blocks_to_clear": 2,
     "delta_size_pct": -5.2,
     "delta_fee_pct": 12.1,
-}
-
-SEED_FEE_DISTRIBUTION = {
-    "bands": [
-        {"range": "1-5", "count": 1200, "pct": 15.5},
-        {"range": "5-10", "count": 2400, "pct": 31.0},
-        {"range": "10-15", "count": 1800, "pct": 23.2},
-        {"range": "15-20", "count": 900, "pct": 11.6},
-        {"range": "20-30", "count": 700, "pct": 9.0},
-        {"range": "30-50", "count": 500, "pct": 6.5},
-        {"range": "50+", "count": 250, "pct": 3.2},
-    ],
-    "total_txs": 7750,
-    "peak_band": "5-10",
+    "delta_total_fee_pct": 8.4,
+    "delta_blocks_pct": -3.1,
 }
 
 SEED_RECENT_BLOCKS = {
@@ -71,38 +59,31 @@ SEED_WATCHLIST = {
     "advisories": [
         {
             "txid": "a" * 64,
-            "role": "SENDER",
             "status": "Stuck",
             "current_fee_rate": 8.0,
-            "action": "RBF to 18.3 sat/vB",
-            "action_type": "RBF",
-            "cost_sats": 4124,
+            "rbf": {"action": "RBF to 18.3 sat/vB", "cost_sats": 4124},
+            "cpfp": {"action": "CPFP Child: 18.3 sat/vB", "cost_sats": 2580},
         },
         {
             "txid": "b" * 64,
-            "role": "RECEIVER",
-            "status": "Stuck",
-            "current_fee_rate": 4.0,
-            "action": "CPFP Child: 18.3 sat/vB",
-            "action_type": "CPFP",
-            "cost_sats": 2580,
+            "status": "Pending",
+            "current_fee_rate": 20.0,
+            "rbf": None,
+            "cpfp": None,
         },
         {
             "txid": "c" * 64,
-            "role": "SENDER",
-            "status": "CONFIRMED",
+            "status": "Confirmed",
             "current_fee_rate": 15.0,
-            "action": "No action needed",
-            "action_type": "None",
-            "cost_sats": None,
+            "rbf": None,
+            "cpfp": None,
         },
     ],
-    "stuck_count": 2,
+    "stuck_count": 1,
     "total_count": 3,
 }
 
 SEED_ORCHESTRATOR_STATUS = {
-    "strategy_mode": "PATIENT",
     "current_median_fee": 18.3,
     "historical_median_fee": 12.5,
     "ema_fee": 14.7,
@@ -110,6 +91,16 @@ SEED_ORCHESTRATOR_STATUS = {
     "fee_premium_pct": 46.4,
     "traffic_level": "NORMAL",
     "latest_block_height": 881247,
+    "patient": {
+        "action": "WAIT",
+        "recommended_fee": 13,
+        "confidence": 0.8,
+    },
+    "reliable": {
+        "action": "BROADCAST",
+        "recommended_fee": 15,
+        "confidence": 0.8,
+    },
 }
 
 
@@ -123,7 +114,6 @@ def fake_redis():
     server = fakeredis.FakeServer()
     r = fakeredis.FakeRedis(server=server, decode_responses=True)
     r.set("dashboard:mempool_stats", json.dumps(SEED_MEMPOOL_STATS))
-    r.set("dashboard:fee_distribution", json.dumps(SEED_FEE_DISTRIBUTION))
     r.set("dashboard:recent_blocks", json.dumps(SEED_RECENT_BLOCKS))
     r.set("dashboard:watchlist", json.dumps(SEED_WATCHLIST))
     r.set("dashboard:orchestrator_status", json.dumps(SEED_ORCHESTRATOR_STATUS))
@@ -185,6 +175,8 @@ class TestMempoolStats:
         data = response.json()
         assert data["delta_size_pct"] == -5.2
         assert data["delta_fee_pct"] == 12.1
+        assert data["delta_total_fee_pct"] == 8.4
+        assert data["delta_blocks_pct"] == -3.1
 
     def test_cache_miss_returns_empty_state(self, empty_client):
         response = empty_client.get("/api/mempool/stats")
@@ -195,38 +187,21 @@ class TestMempoolStats:
         assert data["median_fee"] == 0.0
         assert data["delta_size_pct"] is None
         assert data["delta_fee_pct"] is None
+        assert data["delta_total_fee_pct"] is None
+        assert data["delta_blocks_pct"] is None
 
 
 # =============================================================================
-# Tests: /api/mempool/fee-distribution
+# Tests: /api/mempool/fee-distribution (deprecated — should 404/405)
 # =============================================================================
 
-class TestFeeDistribution:
-    """Tests for the fee histogram endpoint."""
+class TestFeeDistributionDeprecated:
+    """Verify fee-distribution endpoint is removed."""
 
-    def test_returns_fee_bands(self, client):
+    def test_fee_distribution_endpoint_gone(self, client):
         response = client.get("/api/mempool/fee-distribution")
-        assert response.status_code == 200
-
-        data = response.json()
-        assert len(data["bands"]) == 7
-        assert data["total_txs"] == 7750
-        assert data["peak_band"] == "5-10"
-
-    def test_band_percentages_sum_to_100(self, client):
-        response = client.get("/api/mempool/fee-distribution")
-        data = response.json()
-        total_pct = sum(b["pct"] for b in data["bands"])
-        assert 99.5 <= total_pct <= 100.5
-
-    def test_cache_miss_returns_empty_bands(self, empty_client):
-        response = empty_client.get("/api/mempool/fee-distribution")
-        assert response.status_code == 200
-
-        data = response.json()
-        assert data["bands"] == []
-        assert data["total_txs"] == 0
-        assert data["peak_band"] == "N/A"
+        # 404 (no route) or 405 (method not allowed) — both valid
+        assert response.status_code in (404, 405)
 
 
 # =============================================================================
@@ -289,29 +264,42 @@ class TestWatchlist:
 
         data = response.json()
         assert data["total_count"] == 3
-        assert data["stuck_count"] == 2
+        assert data["stuck_count"] == 1
 
-    def test_confirmed_tx_has_no_action(self, client):
+    def test_stuck_tx_has_dual_advisors(self, client):
+        """Stuck txs should have BOTH rbf and cpfp advice."""
         response = client.get("/api/watchlist")
         data = response.json()
-        confirmed = [a for a in data["advisories"] if a["status"] == "CONFIRMED"]
+        stuck = [a for a in data["advisories"] if a["status"] == "Stuck"]
+        assert len(stuck) == 1
+        assert stuck[0]["rbf"] is not None
+        assert stuck[0]["cpfp"] is not None
+        assert stuck[0]["rbf"]["cost_sats"] is not None
+        assert stuck[0]["cpfp"]["cost_sats"] is not None
+
+    def test_confirmed_tx_has_no_advisors(self, client):
+        response = client.get("/api/watchlist")
+        data = response.json()
+        confirmed = [a for a in data["advisories"] if a["status"] == "Confirmed"]
         assert len(confirmed) == 1
-        assert confirmed[0]["action_type"] == "None"
-        assert confirmed[0]["action"] == "No action needed"
+        assert confirmed[0]["rbf"] is None
+        assert confirmed[0]["cpfp"] is None
 
-    def test_stuck_sender_gets_rbf_advice(self, client):
+    def test_pending_tx_has_no_advisors(self, client):
+        """Pending (not stuck) txs should have null advisors."""
         response = client.get("/api/watchlist")
         data = response.json()
-        sender = [a for a in data["advisories"] if a["txid"] == "a" * 64]
-        assert len(sender) == 1
-        assert sender[0]["action_type"] == "RBF"
+        pending = [a for a in data["advisories"] if a["status"] == "Pending"]
+        assert len(pending) == 1
+        assert pending[0]["rbf"] is None
+        assert pending[0]["cpfp"] is None
 
-    def test_stuck_receiver_gets_cpfp_advice(self, client):
+    def test_no_role_field(self, client):
+        """Advisories should NOT have a 'role' field."""
         response = client.get("/api/watchlist")
         data = response.json()
-        receiver = [a for a in data["advisories"] if a["txid"] == "b" * 64]
-        assert len(receiver) == 1
-        assert receiver[0]["action_type"] == "CPFP"
+        for advisory in data["advisories"]:
+            assert "role" not in advisory
 
     def test_cache_miss_returns_empty_watchlist(self, empty_client):
         response = empty_client.get("/api/watchlist")
@@ -328,34 +316,46 @@ class TestWatchlist:
 # =============================================================================
 
 class TestOrchestratorStatus:
-    """Tests for the strategy engine status endpoint."""
+    """Tests for the dual-strategy engine status endpoint."""
 
     def test_returns_status(self, client):
         response = client.get("/api/orchestrator/status")
         assert response.status_code == 200
 
         data = response.json()
-        assert data["strategy_mode"] == "PATIENT"
         assert data["current_median_fee"] == 18.3
         assert data["ema_trend"] == "RISING"
         assert data["traffic_level"] == "NORMAL"
         assert data["latest_block_height"] == 881247
 
-    def test_fee_premium_is_calculated(self, client):
+    def test_dual_strategy_present(self, client):
+        """Response must have both patient and reliable results."""
         response = client.get("/api/orchestrator/status")
         data = response.json()
-        assert data["fee_premium_pct"] == 46.4
+        assert "patient" in data
+        assert "reliable" in data
+        assert data["patient"]["action"] in ("BROADCAST", "WAIT")
+        assert data["reliable"]["action"] in ("BROADCAST", "WAIT")
+        assert data["patient"]["recommended_fee"] > 0
+        assert data["reliable"]["recommended_fee"] > 0
+
+    def test_no_strategy_mode_field(self, client):
+        """Response should NOT have a top-level 'strategy_mode' field."""
+        response = client.get("/api/orchestrator/status")
+        data = response.json()
+        assert "strategy_mode" not in data
 
     def test_cache_miss_returns_default_status(self, empty_client):
         response = empty_client.get("/api/orchestrator/status")
         assert response.status_code == 200
 
         data = response.json()
-        assert data["strategy_mode"] == "PATIENT"
         assert data["current_median_fee"] == 0.0
         assert data["ema_trend"] == "STABLE"
         assert data["traffic_level"] == "LOW"
         assert data["latest_block_height"] is None
+        assert data["patient"]["action"] == "WAIT"
+        assert data["reliable"]["action"] == "BROADCAST"
 
 
 # =============================================================================

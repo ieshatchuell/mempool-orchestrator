@@ -1403,3 +1403,40 @@ const { bands } = data             // TypeScript narrows safely
 - [hooks/](frontend/hooks/) — 5 custom hooks with staggered polling
 - [components/dashboard/](frontend/components/dashboard/) — 5 data components + header
 
+
+---
+
+## ADR-015: Milestone 4 Completion, CQRS Bug, and "Automated Showcase" Pivot
+**Date:** 2026-02-22
+**Status:** ACCEPTED
+**Phase:** Phase 4 - Scalability & UX
+
+### Context
+Milestone 4 (Frontend Polish & Interactivity) has been functionally completed.
+1. The **Dual Strategy Engine** (Patient vs Reliable) is now surfaced in the UI via the `StrategyPanel` component.
+2. The legacy Fee Distribution histogram was removed in favor of a `recharts`-based **Sparkline** visualizing the median fee trend of the last 50 blocks.
+3. The **Watchlist** is fully interactive, utilizing TanStack Query mutations (`useAddWatchlistTx`, `useRemoveWatchlistTx`) to POST and DELETE transactions.
+4. The Advisors panel shows simultaneous RBF and CPFP advice per transaction, replacing the old "Sender/Receiver" strict roles.
+
+### Problem 1: CQRS Eventual Consistency Bug
+During manual QA, a visual race condition was observed on the Watchlist. When a user adds/removes a TXID, the API inserts/deletes from DuckDB immediately, but the Redis read cache is only updated during the next `DuckDBConsumer` flush (every ~15s). Even though the frontend `invalidateQueries` is triggered, the subsequent `GET` request hits the stale Redis cache, making the UI appear unresponsive or giving the illusion that the action failed.
+
+**Future Action:** We must implement synchronous inline Redis updates for API mutations to patch this CQRS lag.
+
+### Problem 2: Rate Limits & Open Inputs
+Allowing users to input arbitrary TXIDs into the Watchlist triggers synchronous fetches to `mempool.space` (`GET /api/tx/{txid}`). In a production environment with multiple users, this creates a vector for rate-limiting (HTTP 429) that could take down the entire Orchestrator infrastructure.
+
+### Decision: Pivot to "Automated Showcase" (Freemium Model)
+Instead of allowing open TXID inputs, the product vision will pivot towards an **Automated Showcase**:
+1. The backend will autonomously curate a list of "interesting" transactions (e.g., stuck whales, low-fee consolidations).
+2. The Watchlist will become a read-only showcase of the Orchestrator's analytical power.
+3. This solves the rate-limit issue, removes the need for complex user management for the MVP, and serves as a lead-generation tool (Freemium model) where users can "upgrade" to track their own TXIDs in a dedicated instance.
+
+### Consequences
+- **Positive:** Milestone 4 UI objectives met with a modern React stack.
+- **Positive:** Clear product direction that aligns with infrastructure limits.
+- **Negative:** Known CQRS bug remains open for the next session.
+
+### Related Files
+- `frontend/hooks/use-watchlist.ts`
+- `backend/src/api/main.py`

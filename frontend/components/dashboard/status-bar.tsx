@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { Wifi, Activity, Gauge, AlertCircle } from "lucide-react"
+import { Activity, Gauge, AlertCircle } from "lucide-react"
 import { useOrchestratorStatus } from "@/hooks/use-orchestrator-status"
 
 export function StatusBar() {
@@ -16,7 +16,6 @@ export function StatusBar() {
     return () => clearInterval(interval)
   }, [])
 
-  const strategyMode = data?.strategy_mode ?? "—"
   const emaFee = data?.ema_fee?.toFixed(1) ?? "—"
   const trafficLevel = data?.traffic_level ?? "—"
   const latestHeight = data?.latest_block_height?.toLocaleString() ?? "—"
@@ -28,15 +27,23 @@ export function StatusBar() {
         ? "text-foreground"
         : "text-success"
 
+  // Show patient action in status bar as primary strategy indicator
+  const patientAction = data?.patient?.action ?? "—"
+  const reliableAction = data?.reliable?.action ?? "—"
+
   return (
     <footer className="border-t border-border bg-card px-6 py-3 lg:px-10">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-5">
           <div className="flex items-center gap-1.5 text-muted-foreground">
-            <Wifi className="h-3.5 w-3.5" />
-            <span className="text-xs">Strategy</span>
-            <span className="font-mono text-xs font-medium text-foreground">
-              {strategyMode}
+            <span className="text-xs">Patient</span>
+            <span className={`font-mono text-xs font-medium ${patientAction === "WAIT" ? "text-bitcoin" : "text-success"}`}>
+              {patientAction}
+            </span>
+            <span className="mx-1 h-3 w-px bg-border" />
+            <span className="text-xs">Reliable</span>
+            <span className={`font-mono text-xs font-medium ${reliableAction === "WAIT" ? "text-bitcoin" : "text-success"}`}>
+              {reliableAction}
             </span>
           </div>
           <div className="hidden items-center gap-1.5 text-muted-foreground sm:flex">

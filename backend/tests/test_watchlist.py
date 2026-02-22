@@ -55,7 +55,7 @@ class TestWatchlistSchema:
             conn.close()
 
     def test_correct_columns(self, tmp_path: Path) -> None:
-        """Verify all expected columns exist."""
+        """Verify all expected columns exist (role removed)."""
         db_path = str(tmp_path / "test_cols.duckdb")
         wl = Watchlist(db_path=db_path)
         wl.close()
@@ -70,9 +70,46 @@ class TestWatchlistSchema:
             """).fetchall()
             col_names = [c[0] for c in columns]
             assert col_names == [
-                "txid", "role", "added_at", "status",
+                "txid", "added_at", "status",
                 "fee", "fee_rate", "confirmed_at", "block_height",
             ]
+        finally:
+            conn.close()
+
+    def test_migration_drops_role_column(self, tmp_path: Path) -> None:
+        """Verify that opening a legacy DB with 'role' column migrates it."""
+        db_path = str(tmp_path / "test_migration.duckdb")
+        # Create legacy table with 'role' column
+        conn = duckdb.connect(db_path)
+        conn.execute("""
+            CREATE TABLE watchlist (
+                txid VARCHAR PRIMARY KEY,
+                role VARCHAR NOT NULL,
+                added_at TIMESTAMP NOT NULL,
+                status VARCHAR NOT NULL DEFAULT 'PENDING',
+                fee INTEGER,
+                fee_rate DOUBLE,
+                confirmed_at TIMESTAMP,
+                block_height INTEGER
+            )
+        """)
+        conn.close()
+
+        # Open with Watchlist — should migrate
+        wl = Watchlist(db_path=db_path)
+        wl.close()
+
+        # Verify role column is gone
+        conn = duckdb.connect(db_path, read_only=True)
+        try:
+            columns = conn.execute("""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'watchlist'
+                ORDER BY ordinal_position
+            """).fetchall()
+            col_names = [c[0] for c in columns]
+            assert "role" not in col_names
         finally:
             conn.close()
 
@@ -86,12 +123,12 @@ class TestWatchlistCRUD:
 
     def test_add_tx(self, watchlist: Watchlist) -> None:
         """Adding a valid tx returns True."""
-        entry = WatchlistEntry(txid=SAMPLE_TXID, role="SENDER")
+        entry = WatchlistEntry(txid=SAMPLE_TXID)
         assert watchlist.add_tx(entry) is True
 
     def test_add_tx_with_fee(self, watchlist: Watchlist) -> None:
         """Adding a tx with fee data stores it correctly."""
-        entry = WatchlistEntry(txid=SAMPLE_TXID, role="RECEIVER")
+        entry = WatchlistEntry(txid=SAMPLE_TXID)
         watchlist.add_tx(entry, fee=1500, fee_rate=8.5)
 
         records = watchlist.get_all()
@@ -101,7 +138,7 @@ class TestWatchlistCRUD:
 
     def test_add_tx_dedup(self, watchlist: Watchlist) -> None:
         """Adding the same txid twice returns False (no duplicate)."""
-        entry = WatchlistEntry(txid=SAMPLE_TXID, role="SENDER")
+        entry = WatchlistEntry(txid=SAMPLE_TXID)
         assert watchlist.add_tx(entry) is True
         assert watchlist.add_tx(entry) is False
 
@@ -110,7 +147,7 @@ class TestWatchlistCRUD:
 
     def test_remove_tx(self, watchlist: Watchlist) -> None:
         """Removing an existing tx returns True."""
-        entry = WatchlistEntry(txid=SAMPLE_TXID, role="SENDER")
+        entry = WatchlistEntry(txid=SAMPLE_TXID)
         watchlist.add_tx(entry)
         assert watchlist.remove_tx(SAMPLE_TXID) is True
         assert len(watchlist.get_all()) == 0
@@ -121,8 +158,8 @@ class TestWatchlistCRUD:
 
     def test_get_active_only_pending(self, watchlist: Watchlist) -> None:
         """get_active() returns only PENDING transactions."""
-        entry1 = WatchlistEntry(txid=SAMPLE_TXID, role="SENDER")
-        entry2 = WatchlistEntry(txid=SAMPLE_TXID_2, role="RECEIVER")
+        entry1 = WatchlistEntry(txid=SAMPLE_TXID)
+        entry2 = WatchlistEntry(txid=SAMPLE_TXID_2)
         watchlist.add_tx(entry1)
         watchlist.add_tx(entry2)
 
@@ -136,8 +173,8 @@ class TestWatchlistCRUD:
 
     def test_get_all_includes_confirmed(self, watchlist: Watchlist) -> None:
         """get_all() returns both PENDING and CONFIRMED entries."""
-        entry1 = WatchlistEntry(txid=SAMPLE_TXID, role="SENDER")
-        entry2 = WatchlistEntry(txid=SAMPLE_TXID_2, role="RECEIVER")
+        entry1 = WatchlistEntry(txid=SAMPLE_TXID)
+        entry2 = WatchlistEntry(txid=SAMPLE_TXID_2)
         watchlist.add_tx(entry1)
         watchlist.add_tx(entry2)
         watchlist.mark_confirmed(SAMPLE_TXID, block_height=900000)
@@ -152,7 +189,7 @@ class TestWatchlistCRUD:
         """count_active() returns count of PENDING entries only."""
         assert watchlist.count_active() == 0
 
-        entry = WatchlistEntry(txid=SAMPLE_TXID, role="SENDER")
+        entry = WatchlistEntry(txid=SAMPLE_TXID)
         watchlist.add_tx(entry)
         assert watchlist.count_active() == 1
 
@@ -169,7 +206,7 @@ class TestStatusTransitions:
 
     def test_mark_confirmed(self, watchlist: Watchlist) -> None:
         """Marking a PENDING tx as confirmed updates all fields."""
-        entry = WatchlistEntry(txid=SAMPLE_TXID, role="SENDER")
+        entry = WatchlistEntry(txid=SAMPLE_TXID)
         watchlist.add_tx(entry)
 
         result = watchlist.mark_confirmed(SAMPLE_TXID, block_height=900000)
@@ -187,7 +224,7 @@ class TestStatusTransitions:
 
     def test_mark_confirmed_idempotent(self, watchlist: Watchlist) -> None:
         """Marking an already-confirmed tx returns False (no double-update)."""
-        entry = WatchlistEntry(txid=SAMPLE_TXID, role="SENDER")
+        entry = WatchlistEntry(txid=SAMPLE_TXID)
         watchlist.add_tx(entry)
 
         assert watchlist.mark_confirmed(SAMPLE_TXID, block_height=900000) is True
@@ -202,36 +239,29 @@ class TestWatchlistValidation:
     """Tests for WatchlistEntry and WatchlistRecord validation."""
 
     def test_valid_entry(self) -> None:
-        """Valid 64-char hex txid and valid role."""
-        entry = WatchlistEntry(txid=SAMPLE_TXID, role="SENDER")
+        """Valid 64-char hex txid."""
+        entry = WatchlistEntry(txid=SAMPLE_TXID)
         assert entry.txid == SAMPLE_TXID.lower()
-        assert entry.role == "SENDER"
 
     def test_invalid_txid_length(self) -> None:
         """txid must be exactly 64 characters."""
         with pytest.raises(ValidationError):
-            WatchlistEntry(txid="abcd", role="SENDER")
+            WatchlistEntry(txid="abcd")
 
     def test_invalid_txid_chars(self) -> None:
         """txid must be hex characters only."""
         with pytest.raises(ValidationError):
-            WatchlistEntry(txid="g" * 64, role="SENDER")
-
-    def test_invalid_role(self) -> None:
-        """role must be SENDER or RECEIVER."""
-        with pytest.raises(ValidationError):
-            WatchlistEntry(txid=SAMPLE_TXID, role="OBSERVER")
+            WatchlistEntry(txid="g" * 64)
 
     def test_txid_normalized_to_lowercase(self) -> None:
         """Mixed-case txid gets normalized to lowercase."""
-        entry = WatchlistEntry(txid="A" * 64, role="SENDER")
+        entry = WatchlistEntry(txid="A" * 64)
         assert entry.txid == "a" * 64
 
     def test_record_defaults(self) -> None:
         """WatchlistRecord has sensible defaults."""
         record = WatchlistRecord(
             txid=SAMPLE_TXID,
-            role="SENDER",
             added_at=datetime.now(timezone.utc),
         )
         assert record.status == "PENDING"

@@ -22,26 +22,8 @@ class MempoolStatsResponse(BaseModel):
     blocks_to_clear: int = Field(..., description="Projected blocks needed to clear mempool")
     delta_size_pct: float | None = Field(None, description="Mempool size change vs 1h ago (%)")
     delta_fee_pct: float | None = Field(None, description="Median fee change vs 1h ago (%)")
-
-
-# =============================================================================
-# /api/mempool/fee-distribution
-# =============================================================================
-
-class FeeBand(BaseModel):
-    """Single fee band in the histogram."""
-
-    range: str = Field(..., description="Fee range label, e.g. '1-5'")
-    count: int = Field(..., description="Estimated tx count in this band")
-    pct: float = Field(..., description="Percentage of total")
-
-
-class FeeDistributionResponse(BaseModel):
-    """Fee histogram data from projected mempool blocks."""
-
-    bands: list[FeeBand]
-    total_txs: int
-    peak_band: str = Field(..., description="Range label with highest percentage")
+    delta_total_fee_pct: float | None = Field(None, description="Total fees change vs 1h ago (%)")
+    delta_blocks_pct: float | None = Field(None, description="Blocks to clear change vs 1h ago (%)")
 
 
 # =============================================================================
@@ -72,16 +54,21 @@ class RecentBlocksResponse(BaseModel):
 # /api/watchlist
 # =============================================================================
 
+class AdvisorAction(BaseModel):
+    """Single advisor recommendation (RBF or CPFP)."""
+
+    action: str = Field(..., description="Human-readable recommendation")
+    cost_sats: int | None = Field(None, description="Estimated cost in satoshis")
+
+
 class WatchlistAdvisory(BaseModel):
-    """Single tracked transaction with advisory info."""
+    """Tracked tx with dual advisor info (no role required)."""
 
     txid: str
-    role: str = Field(..., description="SENDER or RECEIVER")
-    status: str = Field(..., description="PENDING or CONFIRMED")
-    current_fee_rate: float | None = Field(None, description="Fee rate (sat/vB)")
-    action: str = Field(..., description="Human-readable action, e.g. 'RBF to 22.0 sat/vB'")
-    action_type: str = Field(..., description="RBF | CPFP | None")
-    cost_sats: int | None = Field(None, description="Estimated cost in satoshis")
+    status: str = Field(..., description="Pending | Stuck | Confirmed")
+    current_fee_rate: float | None = None
+    rbf: AdvisorAction | None = Field(None, description="Sender path: RBF advice")
+    cpfp: AdvisorAction | None = Field(None, description="Receiver path: CPFP advice")
 
 
 class WatchlistResponse(BaseModel):
@@ -96,10 +83,17 @@ class WatchlistResponse(BaseModel):
 # /api/orchestrator/status
 # =============================================================================
 
-class OrchestratorStatusResponse(BaseModel):
-    """Strategy engine state for header and status bar."""
+class StrategyResult(BaseModel):
+    """Result of applying a single strategy to current market data."""
 
-    strategy_mode: str = Field(..., description="PATIENT or RELIABLE")
+    action: str = Field(..., description="BROADCAST or WAIT")
+    recommended_fee: int = Field(..., description="Recommended fee rate (sat/vB)")
+    confidence: float = Field(..., description="Decision confidence 0.0-1.0")
+
+
+class OrchestratorStatusResponse(BaseModel):
+    """Dual-strategy engine state for header and status bar."""
+
     current_median_fee: float
     historical_median_fee: float
     ema_fee: float
@@ -107,3 +101,5 @@ class OrchestratorStatusResponse(BaseModel):
     fee_premium_pct: float
     traffic_level: str = Field(..., description="LOW | NORMAL | HIGH")
     latest_block_height: int | None = None
+    patient: StrategyResult
+    reliable: StrategyResult

@@ -11,13 +11,13 @@ import json
 from contextlib import asynccontextmanager
 
 import redis
-from fastapi import FastAPI, Query
+import httpx
+from fastapi import FastAPI, Query, Body, Path as FastAPIPath, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.config import settings
 from src.api.schemas import (
     MempoolStatsResponse,
-    FeeDistributionResponse,
     RecentBlocksResponse,
     WatchlistResponse,
     OrchestratorStatusResponse,
@@ -50,10 +50,7 @@ _EMPTY_MEMPOOL_STATS = {
     "mempool_size": 0, "mempool_bytes": 0, "total_fee_sats": 0,
     "median_fee": 0.0, "blocks_to_clear": 0,
     "delta_size_pct": None, "delta_fee_pct": None,
-}
-
-_EMPTY_FEE_DISTRIBUTION = {
-    "bands": [], "total_txs": 0, "peak_band": "N/A",
+    "delta_total_fee_pct": None, "delta_blocks_pct": None,
 }
 
 _EMPTY_RECENT_BLOCKS = {
@@ -65,10 +62,12 @@ _EMPTY_WATCHLIST = {
 }
 
 _EMPTY_ORCHESTRATOR_STATUS = {
-    "strategy_mode": "PATIENT", "current_median_fee": 0.0,
+    "current_median_fee": 0.0,
     "historical_median_fee": 1.0, "ema_fee": 0.0,
     "ema_trend": "STABLE", "fee_premium_pct": 0.0,
     "traffic_level": "LOW", "latest_block_height": None,
+    "patient": {"action": "WAIT", "recommended_fee": 1, "confidence": 0.5},
+    "reliable": {"action": "BROADCAST", "recommended_fee": 1, "confidence": 0.8},
 }
 
 
@@ -106,14 +105,14 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Mempool Orchestrator API",
     description="Read-only data layer for the Next.js dashboard. Reads from Redis.",
-    version="0.2.0",
+    version="0.3.0",
     lifespan=lifespan,
 )
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000"],
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
 )
 
@@ -129,13 +128,6 @@ async def get_mempool_stats():
     return MempoolStatsResponse(**data)
 
 
-@app.get("/api/mempool/fee-distribution", response_model=FeeDistributionResponse)
-async def get_fee_distribution():
-    """Fee histogram from projected mempool blocks."""
-    data = _read_or_default("dashboard:fee_distribution", _EMPTY_FEE_DISTRIBUTION)
-    return FeeDistributionResponse(**data)
-
-
 @app.get("/api/blocks/recent", response_model=RecentBlocksResponse)
 async def get_recent_blocks(
     limit: int = Query(default=10, ge=1, le=50, description="Number of blocks"),
@@ -149,13 +141,63 @@ async def get_recent_blocks(
 
 @app.get("/api/watchlist", response_model=WatchlistResponse)
 async def get_watchlist():
-    """Tracked transactions with RBF/CPFP advisory info."""
+    """Tracked transactions with dual RBF/CPFP advisory info."""
     data = _read_or_default("dashboard:watchlist", _EMPTY_WATCHLIST)
     return WatchlistResponse(**data)
 
 
+@app.post("/api/watchlist", status_code=201)
+async def add_to_watchlist(txid: str = Body(..., embed=True, min_length=64, max_length=64)):
+    """Add a TXID to the watchlist. DuckDB write — isolated connection."""
+    
+    # 1. Fetch TX from mempool.space to get original fee and weight
+    async with httpx.AsyncClient() as client:
+        url = f"{settings.mempool_api_url}/tx/{txid.lower()}"
+        resp = await client.get(url, timeout=10)
+        
+        if resp.status_code == 404:
+            raise HTTPException(status_code=400, detail="Transaction not found in mempool")
+            
+        resp.raise_for_status()
+        tx_data = resp.json()
+        
+    fee = tx_data.get("fee")
+    weight = tx_data.get("weight")
+    
+    if fee is None or weight is None:
+        raise HTTPException(status_code=400, detail="Incomplete transaction data from mempool")
+        
+    # Calculate vsize and fee_rate
+    vsize = weight / 4
+    fee_rate = fee / vsize
+
+    from src.storage.watchlist import Watchlist, WatchlistEntry
+    wl = Watchlist()
+    try:
+        entry = WatchlistEntry(txid=txid)
+        # 2. Save with original fee data so RBF/CPFP can calculate immediately
+        added = wl.add_tx(entry, fee=fee, fee_rate=fee_rate)
+        return {"added": added, "txid": entry.txid}
+    finally:
+        wl.close()
+
+
+@app.delete("/api/watchlist/{txid}")
+async def remove_from_watchlist(txid: str = FastAPIPath(..., min_length=64, max_length=64)):
+    """Remove a TXID from the watchlist."""
+    from src.storage.watchlist import Watchlist
+    wl = Watchlist()
+    try:
+        removed = wl.remove_tx(txid.lower())
+        if not removed:
+            raise HTTPException(status_code=404, detail="TXID not found in watchlist")
+        return {"removed": True, "txid": txid.lower()}
+    finally:
+        wl.close()
+
+
 @app.get("/api/orchestrator/status", response_model=OrchestratorStatusResponse)
 async def get_orchestrator_status():
-    """Strategy engine state: mode, fees, EMA, traffic level."""
+    """Dual-strategy engine state: fees, EMA, traffic level, patient + reliable results."""
     data = _read_or_default("dashboard:orchestrator_status", _EMPTY_ORCHESTRATOR_STATUS)
     return OrchestratorStatusResponse(**data)

@@ -2,7 +2,7 @@ import { DashboardHeader } from "@/components/dashboard/header"
 import { KpiCards } from "@/components/dashboard/kpi-cards"
 import { AdvisorsPanel } from "@/components/dashboard/advisors-panel"
 import { TransactionsTable } from "@/components/dashboard/transactions-table"
-import { FeeHistogram } from "@/components/dashboard/fee-histogram"
+import { StrategyPanel } from "@/components/dashboard/strategy-panel"
 import { StatusBar } from "@/components/dashboard/status-bar"
 
 export default function Page() {
@@ -16,16 +16,16 @@ export default function Page() {
           <KpiCards />
         </section>
 
-        {/* Middle Row: Advisors + Fee Histogram */}
+        {/* Middle Row: Advisors + Strategy Panel */}
         <section
           className="grid grid-cols-1 gap-6 lg:grid-cols-3"
-          aria-label="Advisors and fee distribution"
+          aria-label="Advisors and strategy"
         >
           <div className="lg:col-span-2">
             <AdvisorsPanel />
           </div>
           <div>
-            <FeeHistogram />
+            <StrategyPanel />
           </div>
         </section>
 

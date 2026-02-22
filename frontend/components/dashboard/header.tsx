@@ -2,18 +2,18 @@
 
 import { useState, useEffect } from "react"
 import { useTheme } from "next-themes"
-import { Clock, Zap, Sun, Moon } from "lucide-react"
+import { Sun, Moon } from "lucide-react"
 import { useOrchestratorStatus } from "@/hooks/use-orchestrator-status"
 
 export function DashboardHeader() {
-  const [mode, setMode] = useState<"PATIENT" | "RELIABLE">("PATIENT")
   const { theme, setTheme } = useTheme()
   const [mounted, setMounted] = useState(false)
-  const { data: status } = useOrchestratorStatus()
+  const { data: status, isError } = useOrchestratorStatus()
 
   useEffect(() => setMounted(true), [])
 
   const isDark = mounted && theme === "dark"
+  const isConnected = !isError && !!status
 
   return (
     <header className="border-b border-border bg-card px-6 py-4 lg:px-10">
@@ -45,66 +45,51 @@ export function DashboardHeader() {
           </div>
         </div>
 
-        {/* Center: Strategy Mode Toggle */}
-        <div className="hidden items-center gap-3 md:flex">
-          <span className="text-xs font-medium text-muted-foreground">
-            Strategy
-          </span>
-          <div className="flex overflow-hidden rounded-xl border border-border bg-muted p-0.5">
-            <button
-              onClick={() => setMode("PATIENT")}
-              className={`flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-medium transition-all ${mode === "PATIENT"
-                  ? "bg-card text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
-                }`}
-            >
-              <Clock className="h-3.5 w-3.5" />
-              Patient
-            </button>
-            <button
-              onClick={() => setMode("RELIABLE")}
-              className={`flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-medium transition-all ${mode === "RELIABLE"
-                  ? "bg-card text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
-                }`}
-            >
-              <Zap className="h-3.5 w-3.5" />
-              Reliable
-            </button>
-          </div>
-          <p className="max-w-48 text-xs text-muted-foreground">
-            {mode === "PATIENT"
-              ? "Wait for low-fee windows"
-              : "Prioritize confirmation speed"}
-          </p>
-        </div>
-
-        {/* Right: Theme Toggle + Status */}
+        {/* Right: Theme Switch + Connection Status + Block Height */}
         <div className="flex items-center gap-4">
-          {/* Theme Toggle (binary: Light/Dark) */}
+          {/* Theme Switch (binary Dark/Light) */}
           <button
             onClick={() => setTheme(isDark ? "light" : "dark")}
-            className="flex h-8 w-8 items-center justify-center rounded-xl border border-border bg-muted transition-all hover:bg-card"
+            className="relative flex h-7 w-12 items-center rounded-full border border-border bg-muted p-0.5 transition-colors"
             aria-label="Toggle theme"
           >
-            {isDark ? (
-              <Sun className="h-3.5 w-3.5 text-foreground" />
-            ) : (
-              <Moon className="h-3.5 w-3.5 text-foreground" />
-            )}
+            <span
+              className={`flex h-6 w-6 items-center justify-center rounded-full bg-card shadow-sm transition-transform duration-200 ${isDark ? "translate-x-5" : "translate-x-0"
+                }`}
+            >
+              {isDark ? (
+                <Moon className="h-3 w-3 text-foreground" />
+              ) : (
+                <Sun className="h-3 w-3 text-foreground" />
+              )}
+            </span>
           </button>
 
           <div className="hidden h-5 w-px bg-border sm:block" />
 
-          {/* Connection Status */}
+          {/* Connection Status (driven by useOrchestratorStatus isError) */}
           <div className="flex items-center gap-1.5">
-            <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-75" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
-            </span>
-            <span className="text-xs font-medium text-success">Connected</span>
+            {isConnected ? (
+              <>
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
+                </span>
+                <span className="text-xs font-medium text-success">Connected</span>
+              </>
+            ) : (
+              <>
+                <span className="relative flex h-2 w-2">
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-destructive" />
+                </span>
+                <span className="text-xs font-medium text-destructive">Disconnected</span>
+              </>
+            )}
           </div>
+
           <div className="hidden h-5 w-px bg-border sm:block" />
+
+          {/* Block Height */}
           <div className="hidden items-center gap-1.5 sm:flex">
             <span className="text-xs text-muted-foreground">Block</span>
             <span className="font-mono text-sm font-semibold tabular-nums text-foreground">

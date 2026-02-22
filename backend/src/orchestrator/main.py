@@ -59,11 +59,14 @@ class MarketDecision(TypedDict):
 # LAYER 1: DETERMINISTIC LOGIC (Critical Path)
 # =============================================================================
 
-def evaluate_market_rules(ctx: MempoolContext) -> MarketDecision:
+def evaluate_market_rules(ctx: MempoolContext, strategy_mode: str = "PATIENT") -> MarketDecision:
     """Pure Python implementation of fee decision logic.
     
     This function is the CRITICAL PATH. It must never fail.
     All business rules are implemented here, not in the LLM.
+    
+    strategy_mode is passed as an explicit parameter — this function
+    has no hidden dependency on environment variables or settings.
     
     Dual-Mode Strategy:
     
@@ -82,11 +85,12 @@ def evaluate_market_rules(ctx: MempoolContext) -> MarketDecision:
     
     Args:
         ctx: Current market context from DuckDB.
+        strategy_mode: "PATIENT" or "RELIABLE" — caller decides.
         
     Returns:
         MarketDecision dict with action, recommended_fee, confidence, strategy_mode.
     """
-    mode = ctx.strategy_mode
+    mode = strategy_mode
     
     if mode == "RELIABLE":
         # ─── RELIABLE: EMA-20 fee, always broadcast ────────────────
@@ -297,7 +301,7 @@ async def decision_loop(agent: Agent[None, str]) -> None:
             )
             
             # Step B: Calculate decision using DETERMINISTIC logic (never fails)
-            decision = evaluate_market_rules(context)
+            decision = evaluate_market_rules(context, strategy_mode="PATIENT")
             logger.debug(f"   Python decision: {decision}")
             
             # Step C: Get AI reasoning (graceful degradation if fails)

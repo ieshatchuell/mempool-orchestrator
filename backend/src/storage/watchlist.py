@@ -1,12 +1,11 @@
 """Watchlist persistence layer for tracking Bitcoin transactions.
 
-Stores tracked TXIDs in a DuckDB table with their role (SENDER/RECEIVER)
-and confirmation status. Uses the same isolated DB as agent_history to
-avoid file lock conflicts with the market data DB.
+Stores tracked TXIDs in a DuckDB table with their confirmation status.
+Uses the same isolated DB as agent_history to avoid file lock conflicts
+with the market data DB.
 
 Table: watchlist
 - txid: Primary key (64-char hex string)
-- role: SENDER or RECEIVER (determines RBF vs CPFP in Session 8)
 - added_at: When the tx was added to the watchlist
 - status: PENDING (in mempool) or CONFIRMED (mined)
 - fee: Transaction fee in satoshis (from API lookup)
@@ -32,10 +31,6 @@ class WatchlistEntry(BaseModel):
     """Input model for adding a transaction to the watchlist."""
 
     txid: str = Field(..., description="Transaction ID (64-char hex string)", min_length=64, max_length=64)
-    role: Literal["SENDER", "RECEIVER"] = Field(
-        ...,
-        description="User's role: SENDER (can RBF) or RECEIVER (can CPFP)",
-    )
 
     @field_validator("txid")
     @classmethod
@@ -50,7 +45,6 @@ class WatchlistRecord(BaseModel):
     """Full record from the watchlist table."""
 
     txid: str
-    role: Literal["SENDER", "RECEIVER"]
     added_at: datetime
     status: Literal["PENDING", "CONFIRMED"] = "PENDING"
     fee: int | None = None
@@ -81,11 +75,10 @@ class Watchlist:
         logger.debug(f"Watchlist initialized: {db_path}")
 
     def _create_table(self) -> None:
-        """Create watchlist table if it doesn't exist."""
+        """Create watchlist table if it doesn't exist, and migrate old schema."""
         self._conn.execute("""
             CREATE TABLE IF NOT EXISTS watchlist (
                 txid VARCHAR PRIMARY KEY,
-                role VARCHAR NOT NULL,
                 added_at TIMESTAMP NOT NULL,
                 status VARCHAR NOT NULL DEFAULT 'PENDING',
                 fee INTEGER,
@@ -94,12 +87,20 @@ class Watchlist:
                 block_height INTEGER
             )
         """)
+        # Migration: drop legacy 'role' column if it exists
+        cols = self._conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'watchlist' AND column_name = 'role'"
+        ).fetchall()
+        if cols:
+            self._conn.execute("ALTER TABLE watchlist DROP COLUMN role")
+            logger.info("🔄 Watchlist migration: dropped legacy 'role' column")
 
     def add_tx(self, entry: WatchlistEntry, fee: int | None = None, fee_rate: float | None = None) -> bool:
         """Add a transaction to the watchlist.
         
         Args:
-            entry: Validated WatchlistEntry with txid and role.
+            entry: Validated WatchlistEntry with txid.
             fee: Optional transaction fee in satoshis.
             fee_rate: Optional fee rate in sat/vB.
             
@@ -118,18 +119,17 @@ class Watchlist:
 
         self._conn.execute(
             """
-            INSERT INTO watchlist (txid, role, added_at, status, fee, fee_rate)
-            VALUES (?, ?, ?, 'PENDING', ?, ?)
+            INSERT INTO watchlist (txid, added_at, status, fee, fee_rate)
+            VALUES (?, ?, 'PENDING', ?, ?)
             """,
             [
                 entry.txid,
-                entry.role,
                 datetime.now(timezone.utc),
                 fee,
                 fee_rate,
             ],
         )
-        logger.info(f"👁️ Watchlist: Tracking {entry.txid[:16]}... as {entry.role}")
+        logger.info(f"👁️ Watchlist: Tracking {entry.txid[:16]}...")
         return True
 
     def remove_tx(self, txid: str) -> bool:
@@ -157,7 +157,7 @@ class Watchlist:
         """
         rows = self._conn.execute(
             """
-            SELECT txid, role, added_at, status, fee, fee_rate, confirmed_at, block_height
+            SELECT txid, added_at, status, fee, fee_rate, confirmed_at, block_height
             FROM watchlist
             WHERE status = 'PENDING'
             ORDER BY added_at ASC
@@ -166,8 +166,8 @@ class Watchlist:
 
         return [
             WatchlistRecord(
-                txid=r[0], role=r[1], added_at=r[2], status=r[3],
-                fee=r[4], fee_rate=r[5], confirmed_at=r[6], block_height=r[7],
+                txid=r[0], added_at=r[1], status=r[2],
+                fee=r[3], fee_rate=r[4], confirmed_at=r[5], block_height=r[6],
             )
             for r in rows
         ]
@@ -180,7 +180,7 @@ class Watchlist:
         """
         rows = self._conn.execute(
             """
-            SELECT txid, role, added_at, status, fee, fee_rate, confirmed_at, block_height
+            SELECT txid, added_at, status, fee, fee_rate, confirmed_at, block_height
             FROM watchlist
             ORDER BY added_at DESC
             """
@@ -188,8 +188,8 @@ class Watchlist:
 
         return [
             WatchlistRecord(
-                txid=r[0], role=r[1], added_at=r[2], status=r[3],
-                fee=r[4], fee_rate=r[5], confirmed_at=r[6], block_height=r[7],
+                txid=r[0], added_at=r[1], status=r[2],
+                fee=r[3], fee_rate=r[4], confirmed_at=r[5], block_height=r[6],
             )
             for r in rows
         ]

@@ -28,7 +28,6 @@ def _ctx(**overrides) -> MempoolContext:
         traffic_level="NORMAL",
         ema_fee=4.5,
         ema_trend="STABLE",
-        strategy_mode="PATIENT",
     )
     defaults.update(overrides)
     return MempoolContext(**defaults)
@@ -169,58 +168,56 @@ class TestReliableMode:
 
     def test_always_broadcast(self):
         """RELIABLE always returns BROADCAST, regardless of premium."""
-        ctx = _ctx(strategy_mode="RELIABLE", fee_premium_pct=200.0)
-        decision = evaluate_market_rules(ctx)
+        ctx = _ctx(fee_premium_pct=200.0)
+        decision = evaluate_market_rules(ctx, strategy_mode="RELIABLE")
 
         assert decision["action"] == "BROADCAST"
         assert decision["strategy_mode"] == "RELIABLE"
 
     def test_uses_ema_fee(self):
         """RELIABLE uses ceil(ema_fee) as recommended fee."""
-        ctx = _ctx(strategy_mode="RELIABLE", ema_fee=3.7)
-        decision = evaluate_market_rules(ctx)
+        ctx = _ctx(ema_fee=3.7)
+        decision = evaluate_market_rules(ctx, strategy_mode="RELIABLE")
 
         assert decision["recommended_fee"] == max(1, math.ceil(3.7))
 
     def test_ignores_premium(self):
         """RELIABLE doesn't WAIT even at extreme premiums."""
         ctx = _ctx(
-            strategy_mode="RELIABLE",
             fee_premium_pct=500.0,
             ema_fee=10.0,
         )
-        decision = evaluate_market_rules(ctx)
+        decision = evaluate_market_rules(ctx, strategy_mode="RELIABLE")
 
         assert decision["action"] == "BROADCAST"
 
     def test_fallback_to_current_when_ema_zero(self):
         """RELIABLE falls back to current_median_fee when ema_fee is 0."""
         ctx = _ctx(
-            strategy_mode="RELIABLE",
             ema_fee=0.0,
             current_median_fee=5.0,
         )
-        decision = evaluate_market_rules(ctx)
+        decision = evaluate_market_rules(ctx, strategy_mode="RELIABLE")
 
         assert decision["recommended_fee"] == max(1, math.ceil(5.0))
 
     def test_minrelayfee_floor(self):
         """RELIABLE enforces max(1, ...) floor."""
-        ctx = _ctx(strategy_mode="RELIABLE", ema_fee=0.3)
-        decision = evaluate_market_rules(ctx)
+        ctx = _ctx(ema_fee=0.3)
+        decision = evaluate_market_rules(ctx, strategy_mode="RELIABLE")
 
         assert decision["recommended_fee"] >= 1
 
     def test_fixed_confidence(self):
         """RELIABLE always returns confidence 0.8."""
-        ctx = _ctx(strategy_mode="RELIABLE")
-        decision = evaluate_market_rules(ctx)
+        ctx = _ctx()
+        decision = evaluate_market_rules(ctx, strategy_mode="RELIABLE")
 
         assert decision["confidence"] == 0.8
 
     def test_strategy_mode_in_output(self):
         """strategy_mode field is present in MarketDecision output."""
         for mode in ["PATIENT", "RELIABLE"]:
-            ctx = _ctx(strategy_mode=mode)
-            decision = evaluate_market_rules(ctx)
+            ctx = _ctx()
+            decision = evaluate_market_rules(ctx, strategy_mode=mode)
             assert decision["strategy_mode"] == mode

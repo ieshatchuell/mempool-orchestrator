@@ -61,6 +61,12 @@ storage:
     @echo "📦 Starting DuckDB Storage Consumer..."
     cd backend && uv run python -m src.storage.duckdb_consumer
 
+# Backfill 24h of block history (idempotent, safe to re-run)
+backfill:
+    @echo "{{green}}📦 Running block history backfill...{{reset}}"
+    uv run python scripts/backfill_history.py
+    @echo "{{green}}✅ Backfill complete.{{reset}}"
+
 # Run orchestrator locally (for development)
 orchestrator:
     @echo "{{green}}🧠 Running AI Orchestrator locally...{{reset}}"

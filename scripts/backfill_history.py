@@ -40,7 +40,7 @@ def init_db(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS block_history (
             ingestion_time TIMESTAMP NOT NULL,
-            height UINTEGER NOT NULL,
+            height UINTEGER NOT NULL UNIQUE,
             block_hash VARCHAR NOT NULL,
             block_size UINTEGER NOT NULL,
             block_v_size DOUBLE NOT NULL,
@@ -144,7 +144,17 @@ def insert_blocks(conn: duckdb.DuckDBPyConnection, blocks: list[dict]) -> int:
         conn.execute(
             """INSERT INTO block_history 
                (ingestion_time, height, block_hash, block_size, block_v_size, n_tx, total_fees, median_fee, fee_range, pool_name)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(height) DO UPDATE SET
+                   ingestion_time = EXCLUDED.ingestion_time,
+                   block_hash = EXCLUDED.block_hash,
+                   block_size = EXCLUDED.block_size,
+                   block_v_size = EXCLUDED.block_v_size,
+                   n_tx = EXCLUDED.n_tx,
+                   total_fees = EXCLUDED.total_fees,
+                   median_fee = EXCLUDED.median_fee,
+                   fee_range = EXCLUDED.fee_range,
+                   pool_name = EXCLUDED.pool_name""",
             list(record),
         )
         rows_inserted += 1

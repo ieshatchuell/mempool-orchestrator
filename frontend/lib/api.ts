@@ -7,7 +7,6 @@
 
 import type {
     MempoolStats,
-    FeeDistribution,
     RecentBlocks,
     Watchlist,
     OrchestratorStatus,
@@ -33,8 +32,11 @@ function getBaseUrl(): string {
  * Generic typed fetch wrapper with error handling.
  * Throws on non-2xx responses with the status code and path.
  */
-async function fetchAPI<T>(path: string): Promise<T> {
-    const res = await fetch(`${getBaseUrl()}${path}`, { cache: "no-store" });
+async function fetchAPI<T>(path: string, init?: RequestInit): Promise<T> {
+    const res = await fetch(`${getBaseUrl()}${path}`, {
+        cache: "no-store",
+        ...init,
+    });
     if (!res.ok) {
         throw new Error(`API error ${res.status}: ${path}`);
     }
@@ -45,9 +47,6 @@ export const api = {
     getMempoolStats: () =>
         fetchAPI<MempoolStats>("/api/mempool/stats"),
 
-    getFeeDistribution: () =>
-        fetchAPI<FeeDistribution>("/api/mempool/fee-distribution"),
-
     getRecentBlocks: (limit = 10) =>
         fetchAPI<RecentBlocks>(`/api/blocks/recent?limit=${limit}`),
 
@@ -56,4 +55,16 @@ export const api = {
 
     getOrchestratorStatus: () =>
         fetchAPI<OrchestratorStatus>("/api/orchestrator/status"),
+
+    addWatchlistTx: (txid: string) =>
+        fetchAPI<{ added: boolean; txid: string }>("/api/watchlist", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ txid }),
+        }),
+
+    removeWatchlistTx: (txid: string) =>
+        fetchAPI<{ removed: boolean; txid: string }>(`/api/watchlist/${txid}`, {
+            method: "DELETE",
+        }),
 };

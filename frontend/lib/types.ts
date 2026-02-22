@@ -15,20 +15,8 @@ export interface MempoolStats {
   blocks_to_clear: number;
   delta_size_pct: number | null;
   delta_fee_pct: number | null;
-}
-
-// ── /api/mempool/fee-distribution ────────────────────────────────
-
-export interface FeeBand {
-  range: string;
-  count: number;
-  pct: number;
-}
-
-export interface FeeDistribution {
-  bands: FeeBand[];
-  total_txs: number;
-  peak_band: string;
+  delta_total_fee_pct: number | null;
+  delta_blocks_pct: number | null;
 }
 
 // ── /api/blocks/recent ──────────────────────────────────────────
@@ -51,14 +39,17 @@ export interface RecentBlocks {
 
 // ── /api/watchlist ──────────────────────────────────────────────
 
+export interface AdvisorAction {
+  action: string;
+  cost_sats: number | null;
+}
+
 export interface WatchlistAdvisory {
   txid: string;
-  role: string;
   status: string;
   current_fee_rate: number | null;
-  action: string;
-  action_type: string;
-  cost_sats: number | null;
+  rbf: AdvisorAction | null;
+  cpfp: AdvisorAction | null;
 }
 
 export interface Watchlist {
@@ -69,8 +60,13 @@ export interface Watchlist {
 
 // ── /api/orchestrator/status ────────────────────────────────────
 
+export interface StrategyResult {
+  action: string;
+  recommended_fee: number;
+  confidence: number;
+}
+
 export interface OrchestratorStatus {
-  strategy_mode: string;
   current_median_fee: number;
   historical_median_fee: number;
   ema_fee: number;
@@ -78,4 +74,6 @@ export interface OrchestratorStatus {
   fee_premium_pct: number;
   traffic_level: string;
   latest_block_height: number | null;
+  patient: StrategyResult;
+  reliable: StrategyResult;
 }
