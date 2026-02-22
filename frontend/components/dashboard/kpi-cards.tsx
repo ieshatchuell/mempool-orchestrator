@@ -153,8 +153,8 @@ export function KpiCards() {
         label="Pending Fees"
         value={formatBtc(data.total_fee_sats)}
         unit="BTC"
-        delta={formatDelta(data.delta_fee_pct)}
-        deltaDirection={getDeltaDirection(data.delta_fee_pct)}
+        delta={formatDelta(data.delta_total_fee_pct)}
+        deltaDirection={getDeltaDirection(data.delta_total_fee_pct)}
         icon={<Coins className="h-4 w-4 text-success" />}
         iconBg="bg-success-soft"
       />
@@ -162,8 +162,8 @@ export function KpiCards() {
         label="Blocks to Clear"
         value={`~${data.blocks_to_clear}`}
         unit="blocks"
-        delta="stable"
-        deltaDirection="flat"
+        delta={formatDelta(data.delta_blocks_pct)}
+        deltaDirection={getDeltaDirection(data.delta_blocks_pct)}
         icon={<Layers className="h-4 w-4 text-muted-foreground" />}
         iconBg="bg-muted"
       />

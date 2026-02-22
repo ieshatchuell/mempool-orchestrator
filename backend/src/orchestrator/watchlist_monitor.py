@@ -107,15 +107,15 @@ async def check_watchlist(watchlist: Watchlist, target_fee_rate: float = 1.0) ->
 
 
 def _run_advisor(entry, tx_data: dict, target_fee_rate: float) -> None:
-    """Run the appropriate fee advisor for a pending transaction.
+    """Run both fee advisors (RBF + CPFP) for a pending transaction.
     
-    Extracts fee and vsize from the API response and dispatches to
-    evaluate_rbf() or evaluate_cpfp() based on the entry's role.
+    Extracts fee and vsize from the API response and runs both advisors.
+    No role required — the user interprets which advice applies.
     
     Non-critical: all errors are caught and logged as warnings.
     
     Args:
-        entry: WatchlistRecord with txid, role, etc.
+        entry: WatchlistRecord with txid, etc.
         tx_data: Raw JSON response from GET /api/tx/{txid}.
         target_fee_rate: Target fee rate from evaluate_market_rules().
     """
@@ -126,7 +126,7 @@ def _run_advisor(entry, tx_data: dict, target_fee_rate: float) -> None:
         if fee_sats is None or weight is None:
             logger.debug(
                 f"   ⏳ {entry.txid[:16]}... still pending "
-                f"(role={entry.role}, missing fee/weight data)"
+                f"(missing fee/weight data)"
             )
             return
         
@@ -137,44 +137,36 @@ def _run_advisor(entry, tx_data: dict, target_fee_rate: float) -> None:
         
         fee_rate = fee_sats / vsize
         
-        if entry.role == "SENDER":
-            advice = evaluate_rbf(
-                original_fee_sats=fee_sats,
-                original_fee_rate=fee_rate,
-                original_vsize=vsize,
-                target_fee_rate=target_fee_rate,
+        # Run BOTH advisors for every transaction
+        rbf = evaluate_rbf(
+            original_fee_sats=fee_sats,
+            original_fee_rate=fee_rate,
+            original_vsize=vsize,
+            target_fee_rate=target_fee_rate,
+        )
+        cpfp = evaluate_cpfp(
+            parent_fee_sats=fee_sats,
+            parent_vsize=vsize,
+            target_fee_rate=target_fee_rate,
+        )
+        
+        if rbf.is_stuck:
+            logger.warning(
+                f"   🔄 RBF: {entry.txid[:16]}... stuck at "
+                f"{fee_rate:.1f} sat/vB → "
+                f"recommend {rbf.target_fee_rate:.1f} sat/vB "
+                f"({rbf.target_fee_sats} sats total)"
             )
-            if advice.is_stuck:
-                logger.warning(
-                    f"   🔄 RBF Advisor: {entry.txid[:16]}... stuck at "
-                    f"{advice.original_fee_rate:.1f} sat/vB → "
-                    f"recommend {advice.target_fee_rate:.1f} sat/vB "
-                    f"({advice.target_fee_sats} sats total)"
-                )
-            else:
-                logger.debug(
-                    f"   ✅ {entry.txid[:16]}... fee OK at "
-                    f"{fee_rate:.1f} sat/vB (target: {target_fee_rate:.1f})"
-                )
-                
-        elif entry.role == "RECEIVER":
-            advice = evaluate_cpfp(
-                parent_fee_sats=fee_sats,
-                parent_vsize=vsize,
-                target_fee_rate=target_fee_rate,
+            logger.warning(
+                f"   ⚡ CPFP: {entry.txid[:16]}... → "
+                f"child fee needed: {cpfp.child_fee_sats} sats "
+                f"(package rate: {cpfp.package_fee_rate:.1f} sat/vB)"
             )
-            if advice.is_stuck:
-                logger.warning(
-                    f"   ⚡ CPFP Advisor: {entry.txid[:16]}... parent stuck at "
-                    f"{advice.parent_fee_rate:.1f} sat/vB → "
-                    f"child fee needed: {advice.child_fee_sats} sats "
-                    f"(package rate: {advice.package_fee_rate:.1f} sat/vB)"
-                )
-            else:
-                logger.debug(
-                    f"   ✅ {entry.txid[:16]}... parent fee OK at "
-                    f"{fee_rate:.1f} sat/vB (target: {target_fee_rate:.1f})"
-                )
+        else:
+            logger.debug(
+                f"   ✅ {entry.txid[:16]}... fee OK at "
+                f"{fee_rate:.1f} sat/vB (target: {target_fee_rate:.1f})"
+            )
     except Exception as e:
         logger.warning(
             f"   ⚠️ Advisor failed for {entry.txid[:16]}...: "

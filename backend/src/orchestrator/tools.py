@@ -196,8 +196,7 @@ def get_market_context() -> MempoolContext:
             f"Market context: current_fee={current_median_fee:.2f}, "
             f"historical_fee={historical_median_fee:.2f}, "
             f"ema_fee={ema_fee:.2f}, ema_trend={ema_trend}, "
-            f"premium={fee_premium_pct:.1f}%, traffic={traffic_level}, "
-            f"mode={settings.strategy_mode}"
+            f"premium={fee_premium_pct:.1f}%, traffic={traffic_level}"
         )
         
         return MempoolContext(
@@ -209,7 +208,6 @@ def get_market_context() -> MempoolContext:
             traffic_level=traffic_level,
             ema_fee=ema_fee,
             ema_trend=ema_trend,
-            strategy_mode=settings.strategy_mode,
         )
         
     finally:

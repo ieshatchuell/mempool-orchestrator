@@ -38,6 +38,8 @@ def query_mempool_stats(conn: duckdb.DuckDBPyConnection) -> dict:
             "blocks_to_clear": 0,
             "delta_size_pct": None,
             "delta_fee_pct": None,
+            "delta_total_fee_pct": None,
+            "delta_blocks_pct": None,
         }
 
     mempool_size, mempool_bytes, total_fee_sats = stats
@@ -60,12 +62,14 @@ def query_mempool_stats(conn: duckdb.DuckDBPyConnection) -> dict:
     """).fetchone()
     blocks_to_clear = blocks_row[0] if blocks_row else 0
 
-    # 1-hour delta for mempool size
+    # 1-hour deltas — fetch size, total_fee, AND bytes from 1h ago
     delta_size_pct = None
     delta_fee_pct = None
+    delta_total_fee_pct = None
+    delta_blocks_pct = None
 
     stats_1h = conn.execute("""
-        SELECT size, total_fee
+        SELECT size, total_fee, bytes
         FROM mempool_stats
         WHERE ingestion_time <= (
             SELECT MAX(ingestion_time) - INTERVAL 1 HOUR FROM mempool_stats
@@ -76,6 +80,13 @@ def query_mempool_stats(conn: duckdb.DuckDBPyConnection) -> dict:
 
     if stats_1h and stats_1h[0] > 0:
         delta_size_pct = round(((mempool_size - stats_1h[0]) / stats_1h[0]) * 100, 1)
+
+    if stats_1h and stats_1h[1] > 0:
+        delta_total_fee_pct = round(((total_fee_sats - stats_1h[1]) / stats_1h[1]) * 100, 1)
+
+    # delta_blocks_pct: derived from mempool_bytes ratio (blocks_to_clear ∝ mempool_bytes)
+    if stats_1h and len(stats_1h) >= 3 and stats_1h[2] > 0:
+        delta_blocks_pct = round(((mempool_bytes - stats_1h[2]) / stats_1h[2]) * 100, 1)
 
     # 1-hour delta for median fee
     fee_1h = conn.execute("""
@@ -100,90 +111,9 @@ def query_mempool_stats(conn: duckdb.DuckDBPyConnection) -> dict:
         "blocks_to_clear": blocks_to_clear,
         "delta_size_pct": delta_size_pct,
         "delta_fee_pct": delta_fee_pct,
+        "delta_total_fee_pct": delta_total_fee_pct,
+        "delta_blocks_pct": delta_blocks_pct,
     }
-
-
-# =============================================================================
-# FEE DISTRIBUTION (Histogram)
-# =============================================================================
-
-# Fee band boundaries in sat/vB
-_FEE_BANDS = [
-    (0, 5, "1-5"),
-    (5, 10, "5-10"),
-    (10, 15, "10-15"),
-    (15, 20, "15-20"),
-    (20, 30, "20-30"),
-    (30, 50, "30-50"),
-    (50, float("inf"), "50+"),
-]
-
-
-def query_fee_distribution(conn: duckdb.DuckDBPyConnection) -> dict:
-    """Build fee histogram from the latest mempool_stream snapshot.
-
-    Uses fee_range (p0, p10, p25, p50, p75, p90, p100) and n_tx from each
-    projected block to estimate transaction distribution across fee bands.
-
-    Returns:
-        Dict matching FeeDistributionResponse fields.
-    """
-    rows = conn.execute("""
-        SELECT fee_range, n_tx
-        FROM mempool_stream
-        WHERE ingestion_time = (SELECT MAX(ingestion_time) FROM mempool_stream)
-        ORDER BY block_index
-    """).fetchall()
-
-    if not rows:
-        return {"bands": [], "total_txs": 0, "peak_band": "N/A"}
-
-    # Aggregate fee_range data across all projected blocks
-    # fee_range = [min, p10, p25, p50, p75, p90, max]
-    # Percentile weights: approximate tx distribution based on percentile ranges
-    percentile_weights = [0.10, 0.15, 0.25, 0.25, 0.15, 0.10]
-
-    band_counts: dict[str, int] = {label: 0 for _, _, label in _FEE_BANDS}
-    total_txs = 0
-
-    for fee_range_json, n_tx in rows:
-        if isinstance(fee_range_json, str):
-            fee_range = json.loads(fee_range_json)
-        else:
-            fee_range = fee_range_json
-
-        if not fee_range or len(fee_range) < 7:
-            continue
-
-        total_txs += n_tx
-
-        # Map percentile midpoints to fee bands
-        percentile_midpoints = [
-            fee_range[0],                              # p0-p10 midpoint
-            (fee_range[1] + fee_range[2]) / 2,         # p10-p25
-            (fee_range[2] + fee_range[3]) / 2,         # p25-p50
-            (fee_range[3] + fee_range[4]) / 2,         # p50-p75
-            (fee_range[4] + fee_range[5]) / 2,         # p75-p90
-            fee_range[6],                              # p90-p100
-        ]
-
-        for midpoint, weight in zip(percentile_midpoints, percentile_weights):
-            count = int(n_tx * weight)
-            for low, high, label in _FEE_BANDS:
-                if low <= midpoint < high:
-                    band_counts[label] += count
-                    break
-
-    # Convert to response format
-    bands = []
-    for _, _, label in _FEE_BANDS:
-        count = band_counts[label]
-        pct = round((count / total_txs * 100), 1) if total_txs > 0 else 0.0
-        bands.append({"range": label, "count": count, "pct": pct})
-
-    peak_band = max(bands, key=lambda b: b["pct"])["range"] if bands else "N/A"
-
-    return {"bands": bands, "total_txs": total_txs, "peak_band": peak_band}
 
 
 # =============================================================================
@@ -243,7 +173,7 @@ def query_recent_blocks(conn: duckdb.DuckDBPyConnection, limit: int = 10) -> dic
 
 
 # =============================================================================
-# ORCHESTRATOR STATUS
+# ORCHESTRATOR STATUS (Dual Strategy)
 # =============================================================================
 
 def query_orchestrator_status(
@@ -251,15 +181,12 @@ def query_orchestrator_status(
 ) -> dict:
     """Build orchestrator status from DuckDB market data.
 
-    Replicates the logic from tools.get_market_context() but returns
-    a flat dict for API serialization. Avoids importing the orchestrator
-    module to keep the API layer decoupled.
+    Calculates BOTH strategy results (PATIENT and RELIABLE) on-the-fly
+    so the frontend can show them side by side. No env var dependency.
 
     Returns:
         Dict matching OrchestratorStatusResponse fields.
     """
-    from src.config import settings
-
     # Current median fee from mempool_stream (next block)
     fee_row = market_conn.execute("""
         SELECT median_fee
@@ -314,8 +241,25 @@ def query_orchestrator_status(
     """).fetchone()
     latest_height = height_row[0] if height_row and height_row[0] else None
 
+    # Dual strategy — explicit strategy_mode, no env vars
+    from src.orchestrator.main import evaluate_market_rules
+    from src.orchestrator.schemas import MempoolContext
+
+    ctx = MempoolContext(
+        current_median_fee=current_median_fee,
+        historical_median_fee=historical_median_fee,
+        mempool_size=mempool_size,
+        mempool_bytes=0,
+        fee_premium_pct=fee_premium_pct,
+        traffic_level=traffic_level,
+        ema_fee=ema_fee,
+        ema_trend=ema_trend,
+    )
+
+    patient = evaluate_market_rules(ctx, strategy_mode="PATIENT")
+    reliable = evaluate_market_rules(ctx, strategy_mode="RELIABLE")
+
     return {
-        "strategy_mode": settings.strategy_mode,
         "current_median_fee": current_median_fee,
         "historical_median_fee": historical_median_fee,
         "ema_fee": ema_fee,
@@ -323,18 +267,31 @@ def query_orchestrator_status(
         "fee_premium_pct": round(fee_premium_pct, 1),
         "traffic_level": traffic_level,
         "latest_block_height": latest_height,
+        "patient": {
+            "action": patient["action"],
+            "recommended_fee": patient["recommended_fee"],
+            "confidence": patient["confidence"],
+        },
+        "reliable": {
+            "action": reliable["action"],
+            "recommended_fee": reliable["recommended_fee"],
+            "confidence": reliable["confidence"],
+        },
     }
 
 
 # =============================================================================
-# WATCHLIST (Advisors)
+# WATCHLIST (Role-Agnostic Advisors)
 # =============================================================================
 
 def query_watchlist_advisories(
     history_conn: duckdb.DuckDBPyConnection,
     target_fee_rate: float,
 ) -> dict:
-    """Query watchlist entries and compute advisory actions.
+    """Query watchlist entries and compute BOTH advisor actions per tx.
+
+    Each transaction gets RBF (sender path) AND CPFP (receiver path)
+    advice simultaneously — no role declaration required.
 
     Args:
         history_conn: Connection to agent_history.duckdb.
@@ -354,7 +311,7 @@ def query_watchlist_advisories(
         return {"advisories": [], "stuck_count": 0, "total_count": 0}
 
     rows = history_conn.execute("""
-        SELECT txid, role, status, fee, fee_rate
+        SELECT txid, status, fee, fee_rate
         FROM watchlist
         ORDER BY added_at DESC
     """).fetchall()
@@ -362,90 +319,60 @@ def query_watchlist_advisories(
     advisories = []
     stuck_count = 0
 
-    for txid, role, status, fee_sats, fee_rate in rows:
+    for txid, status, fee_sats, fee_rate in rows:
         if status == "CONFIRMED":
             advisories.append({
                 "txid": txid,
-                "role": role,
-                "status": status,
+                "status": "Confirmed",
                 "current_fee_rate": fee_rate,
-                "action": "No action needed",
-                "action_type": "None",
-                "cost_sats": None,
+                "rbf": None,
+                "cpfp": None,
             })
             continue
 
-        # PENDING transaction — run advisor
         if fee_rate is None or fee_sats is None:
             advisories.append({
                 "txid": txid,
-                "role": role,
                 "status": "Pending",
                 "current_fee_rate": fee_rate,
-                "action": "Monitor only",
-                "action_type": "None",
-                "cost_sats": None,
+                "rbf": None,
+                "cpfp": None,
             })
             continue
 
-        if role == "SENDER":
-            vsize = fee_sats / fee_rate if fee_rate > 0 else 225.0
-            advice = evaluate_rbf(
-                original_fee_sats=fee_sats,
-                original_fee_rate=fee_rate,
-                original_vsize=vsize,
-                target_fee_rate=target_fee_rate,
-            )
-            if advice.is_stuck:
-                stuck_count += 1
-                advisories.append({
-                    "txid": txid,
-                    "role": role,
-                    "status": "Stuck",
-                    "current_fee_rate": fee_rate,
-                    "action": f"RBF to {advice.target_fee_rate:.1f} sat/vB",
-                    "action_type": "RBF",
-                    "cost_sats": advice.target_fee_sats,
-                })
-            else:
-                advisories.append({
-                    "txid": txid,
-                    "role": role,
-                    "status": "Pending",
-                    "current_fee_rate": fee_rate,
-                    "action": "Monitor only",
-                    "action_type": "None",
-                    "cost_sats": None,
-                })
+        # Calculate vsize from fee/rate
+        vsize = fee_sats / fee_rate if fee_rate > 0 else 225.0
 
-        elif role == "RECEIVER":
-            vsize = fee_sats / fee_rate if fee_rate > 0 else 225.0
-            advice = evaluate_cpfp(
-                parent_fee_sats=fee_sats,
-                parent_vsize=vsize,
-                target_fee_rate=target_fee_rate,
-            )
-            if advice.is_stuck:
-                stuck_count += 1
-                advisories.append({
-                    "txid": txid,
-                    "role": role,
-                    "status": "Stuck",
-                    "current_fee_rate": fee_rate,
-                    "action": f"CPFP Child: {target_fee_rate:.1f} sat/vB",
-                    "action_type": "CPFP",
-                    "cost_sats": advice.child_fee_sats,
-                })
-            else:
-                advisories.append({
-                    "txid": txid,
-                    "role": role,
-                    "status": "Pending",
-                    "current_fee_rate": fee_rate,
-                    "action": "Monitor only",
-                    "action_type": "None",
-                    "cost_sats": None,
-                })
+        # Run BOTH advisors for every transaction
+        rbf = evaluate_rbf(
+            original_fee_sats=fee_sats,
+            original_fee_rate=fee_rate,
+            original_vsize=vsize,
+            target_fee_rate=target_fee_rate,
+        )
+        cpfp = evaluate_cpfp(
+            parent_fee_sats=fee_sats,
+            parent_vsize=vsize,
+            target_fee_rate=target_fee_rate,
+        )
+
+        is_stuck = rbf.is_stuck  # Same threshold for both
+        if is_stuck:
+            stuck_count += 1
+
+        advisories.append({
+            "txid": txid,
+            "status": "Stuck" if is_stuck else "Pending",
+            "current_fee_rate": fee_rate,
+            "rbf": {
+                "action": f"RBF to {rbf.target_fee_rate:.1f} sat/vB" if is_stuck else "No action needed",
+                "cost_sats": rbf.target_fee_sats if is_stuck else None,
+            },
+            "cpfp": {
+                "action": f"CPFP Child: {target_fee_rate:.1f} sat/vB" if is_stuck else "No action needed",
+                "cost_sats": cpfp.child_fee_sats if is_stuck else None,
+            },
+        })
 
     return {
         "advisories": advisories,

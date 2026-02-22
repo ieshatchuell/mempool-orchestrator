@@ -43,9 +43,10 @@ The project addresses the auction market for Bitcoin block space.
 - ~~**[Feature] CPFP Advisor (Receiver Strategy):** Alert if an incoming payment is stuck and calculate child-fee to unstick it.~~ ✅ Done (ADR-014)
 - ~~**[Feature] Dust Watch:** Alert when fees dip below 5 sats/vB for UTXO consolidation windows.~~ ✅ Done (ADR-013)
 
-### Phase 4: Scalability & UX — ☁️ Q3 2026
-- **[UI]** Migrate Streamlit to React/Next.js for complex interactivity.
-- **[Decision] YAGNI:** No Repository Pattern and no Cloud LLM for now. Local DuckDB + Local Ollama is sufficient for the current scale.
+### Phase 4: Scalability & UX — ✅ COMPLETED
+- ~~**[UI]** Migrate Streamlit to React/Next.js for complex interactivity.~~ ✅ Done
+- ~~**[Decision] YAGNI:** No Repository Pattern and no Cloud LLM for now. Local DuckDB + Local Ollama is sufficient for the current scale.~~ ✅ Done
+- **[Pivot] Automated Showcase:** Move from open user TXID inputs to an autonomous, read-only showcase of "interesting" transactions to prevent rate-limiting and establish a Freemium model. (ADR-015)
 
 ### Phase 5: True Sovereignty — 🦁 Q4 2026 (Endgame)
 - **[Infra]** Deploy Bitcoin Core Node (Pruned Mode, `prune=550`) in Docker.
@@ -54,4 +55,4 @@ The project addresses the auction market for Bitcoin block space.
 
 ---
 **Lead Engineer:** Israel (@ieshatchuell)
-**Status:** Phase 3 COMPLETED ✅. All items done (Dual-Mode, EMA, Watchlist, Dust Watch, RBF Advisor, CPFP Advisor). Phase 4 next.
+**Status:** Phase 4 COMPLETED ✅. UI migrated to Next.js with interactive mutations. Phase 5 (True Sovereignty) and CQRS bugfix next.

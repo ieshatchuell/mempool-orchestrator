@@ -13,7 +13,6 @@ from src.config import settings
 from src.schemas import MempoolStats, MempoolBlock, ConfirmedBlock
 from src.api.queries import (
     query_mempool_stats,
-    query_fee_distribution,
     query_recent_blocks,
     query_orchestrator_status,
     query_watchlist_advisories,
@@ -85,7 +84,7 @@ class DuckDBConsumer:
         self.db_conn.execute("""
             CREATE TABLE IF NOT EXISTS block_history (
                 ingestion_time TIMESTAMP NOT NULL,
-                height UINTEGER NOT NULL,
+                height UINTEGER NOT NULL UNIQUE,
                 block_hash VARCHAR NOT NULL,
                 block_size UINTEGER NOT NULL,
                 block_v_size DOUBLE NOT NULL,
@@ -266,15 +265,34 @@ class DuckDBConsumer:
                 )
                 print(f"✅ Inserted {len(stream_records)} mempool stream records.")
 
-            # Batch insert block history (confirmed blocks)
+            # UPSERT block history (confirmed blocks) — dedup by height
             if history_records:
-                self.db_conn.executemany(
-                    """INSERT INTO block_history 
-                       (ingestion_time, height, block_hash, block_size, block_v_size, n_tx, total_fees, median_fee, fee_range, pool_name) 
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    history_records
-                )
-                print(f"✅ Inserted {len(history_records)} block history records.")
+                for record in history_records:
+                    self.db_conn.execute(
+                        """INSERT INTO block_history 
+                           (ingestion_time, height, block_hash, block_size, block_v_size, n_tx, total_fees, median_fee, fee_range, pool_name) 
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                           ON CONFLICT(height) DO UPDATE SET
+                               ingestion_time = EXCLUDED.ingestion_time,
+                               block_hash = EXCLUDED.block_hash,
+                               block_size = EXCLUDED.block_size,
+                               block_v_size = EXCLUDED.block_v_size,
+                               n_tx = EXCLUDED.n_tx,
+                               total_fees = EXCLUDED.total_fees,
+                               median_fee = EXCLUDED.median_fee,
+                               fee_range = EXCLUDED.fee_range,
+                               pool_name = EXCLUDED.pool_name""",
+                        list(record),
+                    )
+                print(f"✅ Upserted {len(history_records)} block history records.")
+
+                # Retention policy: keep only the latest 144 blocks
+                self.db_conn.execute("""
+                    DELETE FROM block_history
+                    WHERE height NOT IN (
+                        SELECT height FROM block_history ORDER BY height DESC LIMIT 144
+                    )
+                """)
 
             # Only commit Kafka offset after successful DB writes
             self.consumer.commit()
@@ -296,10 +314,6 @@ class DuckDBConsumer:
             self._redis.set(
                 "dashboard:mempool_stats",
                 json.dumps(query_mempool_stats(self.db_conn)),
-            )
-            self._redis.set(
-                "dashboard:fee_distribution",
-                json.dumps(query_fee_distribution(self.db_conn)),
             )
             self._redis.set(
                 "dashboard:recent_blocks",
