@@ -8,7 +8,9 @@ import {
   ArrowUp,
   ArrowDown,
   Minus,
+  AlertCircle,
 } from "lucide-react"
+import { useMempoolStats } from "@/hooks/use-mempool-stats"
 
 interface KpiCardProps {
   label: string
@@ -33,15 +35,15 @@ function KpiCard({
     deltaDirection === "up"
       ? ArrowUp
       : deltaDirection === "down"
-      ? ArrowDown
-      : Minus
+        ? ArrowDown
+        : Minus
 
   const deltaColor =
     deltaDirection === "up"
       ? "text-destructive"
       : deltaDirection === "down"
-      ? "text-success"
-      : "text-muted-foreground"
+        ? "text-success"
+        : "text-muted-foreground"
 
   return (
     <div className="flex flex-col gap-3 rounded-2xl border border-border bg-card p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)] dark:shadow-none">
@@ -70,39 +72,95 @@ function KpiCard({
   )
 }
 
+function KpiSkeleton() {
+  return (
+    <div className="flex flex-col gap-3 rounded-2xl border border-border bg-card p-5 animate-pulse">
+      <div className="flex items-center justify-between">
+        <div className="h-4 w-24 rounded bg-muted" />
+        <div className="h-8 w-8 rounded-xl bg-muted" />
+      </div>
+      <div className="h-9 w-20 rounded bg-muted" />
+      <div className="h-4 w-16 rounded bg-muted" />
+    </div>
+  )
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(1)}`
+  if (bytes >= 1_000) return `${(bytes / 1_000).toFixed(0)}`
+  return `${bytes}`
+}
+
+function formatBtc(sats: number): string {
+  return (sats / 100_000_000).toFixed(3)
+}
+
+function getDeltaDirection(pct: number | null): "up" | "down" | "flat" {
+  if (pct === null || pct === 0) return "flat"
+  return pct > 0 ? "up" : "down"
+}
+
+function formatDelta(pct: number | null): string {
+  if (pct === null) return "N/A"
+  const sign = pct > 0 ? "+" : ""
+  return `${sign}${pct.toFixed(1)}%`
+}
+
 export function KpiCards() {
+  const { data, isError } = useMempoolStats()
+
+  if (isError) {
+    return (
+      <div className="flex items-center gap-2 rounded-2xl border border-destructive/30 bg-destructive/5 p-5 text-sm text-destructive">
+        <AlertCircle className="h-4 w-4" />
+        <span>Unable to load mempool stats</span>
+      </div>
+    )
+  }
+
+  if (!data) {
+    return (
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <KpiSkeleton />
+        <KpiSkeleton />
+        <KpiSkeleton />
+        <KpiSkeleton />
+      </div>
+    )
+  }
+
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
       <KpiCard
         label="Mempool Size"
-        value="142.8"
+        value={formatBytes(data.mempool_bytes)}
         unit="MB"
-        delta="-12.4%"
-        deltaDirection="down"
+        delta={formatDelta(data.delta_size_pct)}
+        deltaDirection={getDeltaDirection(data.delta_size_pct)}
         icon={<Database className="h-4 w-4 text-info" />}
         iconBg="bg-info-soft"
       />
       <KpiCard
         label="Median Fee Rate"
-        value="18.3"
+        value={data.median_fee.toFixed(1)}
         unit="sat/vB"
-        delta="+3.1%"
-        deltaDirection="up"
+        delta={formatDelta(data.delta_fee_pct)}
+        deltaDirection={getDeltaDirection(data.delta_fee_pct)}
         icon={<TrendingDown className="h-4 w-4 text-bitcoin" />}
         iconBg="bg-bitcoin-soft"
       />
       <KpiCard
         label="Pending Fees"
-        value="2.847"
+        value={formatBtc(data.total_fee_sats)}
         unit="BTC"
-        delta="-8.2%"
-        deltaDirection="down"
+        delta={formatDelta(data.delta_fee_pct)}
+        deltaDirection={getDeltaDirection(data.delta_fee_pct)}
         icon={<Coins className="h-4 w-4 text-success" />}
         iconBg="bg-success-soft"
       />
       <KpiCard
         label="Blocks to Clear"
-        value="~6"
+        value={`~${data.blocks_to_clear}`}
         unit="blocks"
         delta="stable"
         deltaDirection="flat"

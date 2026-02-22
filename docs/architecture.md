@@ -128,6 +128,44 @@ The Radar pattern provides a lightweight, metadata-first approach to ingesting B
 - **Total Redis footprint:** < 10 KB.
 - **Launch:** `just api` (FastAPI on port 8000)
 
+### D.1 Frontend Data Layer (TanStack Query v5 — ADR-014)
+- **Purpose:** Real-time polling from the Next.js dashboard to the FastAPI API.
+- **Library:** TanStack Query v5 — production-grade server state management (cache, polling, retry, devtools).
+- **Architecture:**
+
+```
+  Next.js (Docker :3000)         FastAPI (Host :8000)
+  ┌──────────────────────────┐   ┌─────────────────────┐
+  │ app/providers.tsx         │   │                     │
+  │  └─ QueryClientProvider   │   │                     │
+  │      └─ page.tsx          │   │                     │
+  │          ├─ <KpiCards>    │──▶│ /api/mempool/stats   │
+  │          ├─ <FeeHist>     │──▶│ /api/mempool/fee-*   │
+  │          ├─ <BlocksTable> │──▶│ /api/blocks/recent   │
+  │          ├─ <Advisors>    │──▶│ /api/watchlist        │
+  │          └─ <StatusBar>   │──▶│ /api/orchestrator/*   │
+  └──────────────────────────┘   └─────────────────────┘
+         hooks/use-*.ts              lib/api.ts
+         (useQuery + poll)           (fetchAPI + no-store)
+```
+
+- **Polling Intervals (staggered by data volatility):**
+
+| Hook | Endpoint | `refetchInterval` | `staleTime` | Rationale |
+|---|---|---|---|---|
+| `useMempoolStats` | `/api/mempool/stats` | 5s | 3s | Most volatile: KPIs change every flush |
+| `useFeeDistribution` | `/api/mempool/fee-distribution` | 10s | 8s | Histogram shifts slower |
+| `useOrchestratorStatus` | `/api/orchestrator/status` | 10s | 8s | EMA/traffic follow stats |
+| `useWatchlist` | `/api/watchlist` | 15s | 12s | Advisories recalculated per flush |
+| `useRecentBlocks` | `/api/blocks/recent` | 30s | 25s | Blocks mined ~10 min |
+
+- **SSR Safety (ADR-014):**
+  - **Docker networking:** `fetchAPI()` uses `host.docker.internal:8000` on server, `localhost:8000` on client.
+  - **Cache bypass:** `fetch(..., { cache: "no-store" })` disables Next.js aggressive caching.
+  - **Data guard:** All components use `if (!data) return <Skeleton />` instead of `data!` non-null assertion.
+- **Types:** `lib/types.ts` — 8 interfaces mapped 1:1 from `backend/src/api/schemas.py`.
+- **Config:** `NEXT_PUBLIC_API_URL` (client), `INTERNAL_API_URL` (SSR override).
+
 ### E. The Orchestrator (Neuro-Symbolic Brain)
 
 The Orchestrator implements a **Safe-Guarded Hybrid AI** pattern:
@@ -242,7 +280,8 @@ The system implements a **Strict Data Isolation** pattern with physically separa
     - `tests/test_api.py`: REST API client behavior.
     - `tests/test_agent_history.py`: Agent decision persistence.
     - `tests/test_api_server.py`: FastAPI endpoints (fakeredis).
-    - *170 total tests.*
+    - *170 total backend tests.*
+  - **Frontend Types:** `lib/types.ts` — 8 strict interfaces (zero `any`).
 
 ## 5. Architectural Patterns
 
