@@ -1351,3 +1351,55 @@ cd backend && uv run pytest -v  # 170 passed in 0.73s
 - [docker-compose.yml](infra/docker-compose.yml) — Redis service
 - [test_api_server.py](backend/tests/test_api_server.py) — 21 tests with fakeredis
 
+---
+
+### ADR-014 | Next.js SSR + TanStack Query: Docker Networking, Cache Bypass & Data Safety
+**Status:** ACCEPTED
+**Date:** 2026-02-22
+**Context:** ADR-013 delivered a FastAPI + Redis read layer. Milestone 3 connects the Next.js frontend (running in an ephemeral Docker container) to this API using TanStack Query v5 for real-time polling. Three runtime issues emerged during integration.
+
+#### Problem 1: SSR Fetch Fails Inside Docker
+Next.js App Router pre-renders on the server. Inside the Docker container, `fetch("http://localhost:8000/...")` targets the container itself, not the host machine where FastAPI runs.
+
+**Options Evaluated:**
+
+| Option | Mechanism | Verdict |
+|---|---|---|
+| A. Single env var | `NEXT_PUBLIC_API_URL` for both SSR and client | ❌ `localhost` doesn't resolve inside Docker |
+| B. Context-aware URL | `typeof window === "undefined"` check in `fetchAPI()` | ✅ **Chosen** |
+| C. Next.js rewrites | `next.config.mjs` proxy to `/api/*` | ❌ Adds complexity, hides the real endpoint |
+
+**Decision:** `lib/api.ts` uses `getBaseUrl()`:
+- Server (SSR): `INTERNAL_API_URL` → defaults to `http://host.docker.internal:8000`
+- Client (browser): `NEXT_PUBLIC_API_URL` → defaults to `http://localhost:8000`
+
+#### Problem 2: TanStack Query Polling Returns Stale Data
+Next.js App Router patches global `fetch()` with `{ cache: "force-cache" }` by default. TanStack Query's `refetchInterval` fires correctly, but `fetch()` returns cached responses.
+
+**Decision:** Add `{ cache: "no-store" }` to `fetchAPI()`. TanStack Query manages its own cache layer — the browser/Next.js cache must be fully bypassed.
+
+#### Problem 3: `data!` Crash on SSR Hydration
+In TanStack Query v5 with SSR, there's a hydration gap where `isLoading` is `false` but `data` is still `undefined`. Using `data!` (non-null assertion) causes runtime `TypeError: Cannot destructure property 'X' of 'data' as it is undefined`.
+
+**Decision:** Ban `data!`. All 5 data components follow this pattern:
+```typescript
+const { data, isError } = useHook()
+if (isError) return <ErrorBanner />
+if (!data) return <Skeleton />     // covers: loading, SSR gap, any undefined state
+const { bands } = data             // TypeScript narrows safely
+```
+
+#### Consequences
+- **Positive:** Zero runtime crashes across SSR, hydration, and client-side rendering.
+- **Positive:** Polling works correctly with staggered intervals (5s–30s).
+- **Positive:** Full type safety — zero `any`, zero `!` assertions in data components.
+- **Negative:** `no-store` disables all server-side caching — acceptable for a real-time dashboard.
+- **Negative:** Each component independently checks `!data` — minor duplication, but explicit and safe.
+
+### Related Files
+- [lib/api.ts](frontend/lib/api.ts) — `getBaseUrl()` + `{ cache: "no-store" }`
+- [lib/types.ts](frontend/lib/types.ts) — 8 TypeScript interfaces
+- [app/providers.tsx](frontend/app/providers.tsx) — QueryClientProvider + DevTools
+- [hooks/](frontend/hooks/) — 5 custom hooks with staggered polling
+- [components/dashboard/](frontend/components/dashboard/) — 5 data components + header
+
