@@ -17,24 +17,22 @@ services:
       timeout: 3s
       retries: 5
 
-  redis:
-    image: redis:alpine
-    container_name: redis
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
     ports:
-      - "6379:6379"
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: mempool
+      POSTGRES_PASSWORD: mempool
+      POSTGRES_DB: mempool
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "pg_isready -U mempool"]
       interval: 5s
       timeout: 3s
       retries: 5
-
-  ollama:
-    image: ollama/ollama:latest
-    container_name: ollama
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama
 
   orchestrator:
     build:
@@ -43,15 +41,11 @@ services:
     container_name: orchestrator
     depends_on:
       - redpanda
-      - ollama
+      - postgres
     environment:
-      - DUCKDB_PATH=/app/data/market/mempool_data.duckdb
-      - AGENT_HISTORY_PATH=/app/data/history/agent_history.duckdb
-      - OLLAMA_HOST=http://ollama:11434
-    volumes:
-      - ../data/market:/app/data/market:ro    # Read-only market data
-      - ../data/history:/app/data/history:rw  # Read-write agent history
-    command: uv run python -m src.orchestrator.main
+      - KAFKA_BOOTSTRAP_SERVERS=redpanda:9092
+      - POSTGRES_DSN=postgresql+asyncpg://mempool:mempool@postgres:5432/mempool
+    command: ["sleep", "infinity"]
 
 volumes:
-  ollama_data:
+  postgres_data:

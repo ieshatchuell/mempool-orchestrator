@@ -1,219 +1,180 @@
-"""Pure SQL query functions for the FastAPI data layer.
+"""Async query functions for the FastAPI data layer.
 
-All functions receive a DuckDB connection and return typed data.
-No FastAPI imports — fully testable in isolation.
-All connections must be opened with read_only=True.
+All functions use SQLAlchemy async sessions to read from PostgreSQL.
+No framework imports — fully testable in isolation.
+Read-only: no INSERT/UPDATE/DELETE operations.
 """
 
-import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
-import duckdb
+from sqlalchemy import select, func, desc
+
+from src.infrastructure.database.session import async_session
+from src.infrastructure.database.models import BlockRecord, MempoolSnapshot
 
 
 # =============================================================================
 # MEMPOOL STATS (KPI Cards)
 # =============================================================================
 
-def query_mempool_stats(conn: duckdb.DuckDBPyConnection) -> dict:
-    """Query latest mempool stats + next-block fee + blocks to clear.
+async def query_mempool_stats() -> dict:
+    """Query latest mempool snapshot + 1h-ago snapshot for deltas.
 
     Returns:
         Dict matching MempoolStatsResponse fields.
     """
-    # Latest mempool stats
-    stats = conn.execute("""
-        SELECT size, bytes, total_fee
-        FROM mempool_stats
-        ORDER BY ingestion_time DESC
-        LIMIT 1
-    """).fetchone()
-
-    if not stats:
-        return {
-            "mempool_size": 0,
-            "mempool_bytes": 0,
-            "total_fee_sats": 0,
-            "median_fee": 0.0,
-            "blocks_to_clear": 0,
-            "delta_size_pct": None,
-            "delta_fee_pct": None,
-            "delta_total_fee_pct": None,
-            "delta_blocks_pct": None,
-        }
-
-    mempool_size, mempool_bytes, total_fee_sats = stats
-
-    # Next-block median fee from mempool_stream
-    fee_row = conn.execute("""
-        SELECT median_fee
-        FROM mempool_stream
-        WHERE block_index = 0
-        ORDER BY ingestion_time DESC
-        LIMIT 1
-    """).fetchone()
-    median_fee = fee_row[0] if fee_row else 0.0
-
-    # Blocks to clear: count of projected blocks in latest snapshot
-    blocks_row = conn.execute("""
-        SELECT COUNT(*)
-        FROM mempool_stream
-        WHERE ingestion_time = (SELECT MAX(ingestion_time) FROM mempool_stream)
-    """).fetchone()
-    blocks_to_clear = blocks_row[0] if blocks_row else 0
-
-    # 1-hour deltas — fetch size, total_fee, AND bytes from 1h ago
-    delta_size_pct = None
-    delta_fee_pct = None
-    delta_total_fee_pct = None
-    delta_blocks_pct = None
-
-    stats_1h = conn.execute("""
-        SELECT size, total_fee, bytes
-        FROM mempool_stats
-        WHERE ingestion_time <= (
-            SELECT MAX(ingestion_time) - INTERVAL 1 HOUR FROM mempool_stats
+    async with async_session() as session:
+        # Latest snapshot
+        latest_stmt = (
+            select(MempoolSnapshot)
+            .order_by(desc(MempoolSnapshot.captured_at))
+            .limit(1)
         )
-        ORDER BY ingestion_time DESC
-        LIMIT 1
-    """).fetchone()
+        latest = (await session.execute(latest_stmt)).scalar_one_or_none()
 
-    if stats_1h and stats_1h[0] > 0:
-        delta_size_pct = round(((mempool_size - stats_1h[0]) / stats_1h[0]) * 100, 1)
+        if not latest:
+            return {
+                "mempool_size": 0,
+                "mempool_bytes": 0,
+                "total_fee_sats": 0,
+                "median_fee": 0.0,
+                "blocks_to_clear": 0,
+                "delta_size_pct": None,
+                "delta_fee_pct": None,
+                "delta_total_fee_pct": None,
+                "delta_blocks_pct": None,
+            }
 
-    if stats_1h and stats_1h[1] > 0:
-        delta_total_fee_pct = round(((total_fee_sats - stats_1h[1]) / stats_1h[1]) * 100, 1)
+        # 1-hour-ago snapshot for deltas
+        one_hour_ago = latest.captured_at - timedelta(hours=1)
+        old_stmt = (
+            select(MempoolSnapshot)
+            .where(MempoolSnapshot.captured_at <= one_hour_ago)
+            .order_by(desc(MempoolSnapshot.captured_at))
+            .limit(1)
+        )
+        old = (await session.execute(old_stmt)).scalar_one_or_none()
 
-    # delta_blocks_pct: derived from mempool_bytes ratio (blocks_to_clear ∝ mempool_bytes)
-    if stats_1h and len(stats_1h) >= 3 and stats_1h[2] > 0:
-        delta_blocks_pct = round(((mempool_bytes - stats_1h[2]) / stats_1h[2]) * 100, 1)
+        delta_size_pct = None
+        delta_fee_pct = None
+        delta_total_fee_pct = None
+        delta_blocks_pct = None
 
-    # 1-hour delta for median fee
-    fee_1h = conn.execute("""
-        SELECT median_fee
-        FROM mempool_stream
-        WHERE block_index = 0
-          AND ingestion_time <= (
-              SELECT MAX(ingestion_time) - INTERVAL 1 HOUR FROM mempool_stream
-          )
-        ORDER BY ingestion_time DESC
-        LIMIT 1
-    """).fetchone()
+        if old:
+            if old.tx_count > 0:
+                delta_size_pct = round(((latest.tx_count - old.tx_count) / old.tx_count) * 100, 1)
+            if old.total_fee_sats > 0:
+                delta_total_fee_pct = round(((latest.total_fee_sats - old.total_fee_sats) / old.total_fee_sats) * 100, 1)
+            if old.median_fee > 0:
+                delta_fee_pct = round(((latest.median_fee - old.median_fee) / old.median_fee) * 100, 1)
+            if old.total_bytes > 0:
+                delta_blocks_pct = round(((latest.total_bytes - old.total_bytes) / old.total_bytes) * 100, 1)
 
-    if fee_1h and fee_1h[0] > 0:
-        delta_fee_pct = round(((median_fee - fee_1h[0]) / fee_1h[0]) * 100, 1)
-
-    return {
-        "mempool_size": mempool_size,
-        "mempool_bytes": mempool_bytes,
-        "total_fee_sats": total_fee_sats,
-        "median_fee": median_fee,
-        "blocks_to_clear": blocks_to_clear,
-        "delta_size_pct": delta_size_pct,
-        "delta_fee_pct": delta_fee_pct,
-        "delta_total_fee_pct": delta_total_fee_pct,
-        "delta_blocks_pct": delta_blocks_pct,
-    }
+        return {
+            "mempool_size": latest.tx_count,
+            "mempool_bytes": latest.total_bytes,
+            "total_fee_sats": latest.total_fee_sats,
+            "median_fee": latest.median_fee,
+            "blocks_to_clear": 0,  # Requires mempool-blocks processing (deferred)
+            "delta_size_pct": delta_size_pct,
+            "delta_fee_pct": delta_fee_pct,
+            "delta_total_fee_pct": delta_total_fee_pct,
+            "delta_blocks_pct": delta_blocks_pct,
+        }
 
 
 # =============================================================================
 # RECENT BLOCKS
 # =============================================================================
 
-def query_recent_blocks(conn: duckdb.DuckDBPyConnection, limit: int = 10) -> dict:
-    """Query confirmed blocks from block_history.
+async def query_recent_blocks(limit: int = 10) -> dict:
+    """Query confirmed blocks ordered by height descending.
 
     Returns:
         Dict matching RecentBlocksResponse fields.
     """
-    rows = conn.execute("""
-        SELECT height, ingestion_time, n_tx, block_size,
-               median_fee, total_fees, fee_range, pool_name
-        FROM block_history
-        ORDER BY height DESC
-        LIMIT ?
-    """, [limit]).fetchall()
+    async with async_session() as session:
+        stmt = (
+            select(BlockRecord)
+            .order_by(desc(BlockRecord.height))
+            .limit(limit)
+        )
+        result = await session.execute(stmt)
+        rows = result.scalars().all()
 
-    if not rows:
-        return {"blocks": [], "latest_height": None}
+        if not rows:
+            return {"blocks": [], "latest_height": None}
 
-    blocks = []
-    for row in rows:
-        height, ingestion_time, n_tx, block_size, median_fee, total_fees, fee_range_json, pool_name = row
+        blocks = []
+        for row in rows:
+            # Convert unix timestamp to ISO 8601
+            ts = datetime.fromtimestamp(row.timestamp, tz=timezone.utc).isoformat()
+            blocks.append({
+                "height": row.height,
+                "timestamp": ts,
+                "tx_count": row.tx_count,
+                "size_bytes": row.size,
+                "median_fee": row.median_fee,
+                "total_fees_sats": row.total_fees,
+                "fee_range": [],  # Not stored in current BlockRecord schema
+                "pool_name": None,  # Not stored in current BlockRecord schema
+            })
 
-        # Parse fee_range
-        if isinstance(fee_range_json, str):
-            fee_range = json.loads(fee_range_json)
-        elif fee_range_json is not None:
-            fee_range = fee_range_json
-        else:
-            fee_range = []
-
-        # Format timestamp
-        if isinstance(ingestion_time, datetime):
-            timestamp_str = ingestion_time.isoformat()
-        else:
-            timestamp_str = str(ingestion_time)
-
-        blocks.append({
-            "height": height,
-            "timestamp": timestamp_str,
-            "tx_count": n_tx,
-            "size_bytes": block_size,
-            "median_fee": median_fee,
-            "total_fees_sats": total_fees,
-            "fee_range": fee_range,
-            "pool_name": pool_name,
-        })
-
-    return {
-        "blocks": blocks,
-        "latest_height": blocks[0]["height"] if blocks else None,
-    }
+        return {
+            "blocks": blocks,
+            "latest_height": blocks[0]["height"] if blocks else None,
+        }
 
 
 # =============================================================================
-# ORCHESTRATOR STATUS (Dual Strategy)
+# ORCHESTRATOR STATUS (Market Metrics)
 # =============================================================================
 
-def query_orchestrator_status(
-    market_conn: duckdb.DuckDBPyConnection,
-) -> dict:
-    """Build orchestrator status from DuckDB market data.
+async def query_orchestrator_status() -> dict:
+    """Build market status from PostgreSQL data.
 
-    Calculates BOTH strategy results (PATIENT and RELIABLE) on-the-fly
-    so the frontend can show them side by side. No env var dependency.
+    Calculates EMA, trend, traffic level from stored blocks and snapshots.
+    Strategy evaluation (PATIENT/RELIABLE) deferred to future phase.
 
     Returns:
         Dict matching OrchestratorStatusResponse fields.
     """
-    # Current median fee from mempool_stream (next block)
-    fee_row = market_conn.execute("""
-        SELECT median_fee
-        FROM mempool_stream
-        WHERE block_index = 0
-        ORDER BY ingestion_time DESC
-        LIMIT 1
-    """).fetchone()
-    current_median_fee = fee_row[0] if fee_row else 0.0
+    async with async_session() as session:
+        # Current median fee from latest snapshot
+        latest_snap = (await session.execute(
+            select(MempoolSnapshot)
+            .order_by(desc(MempoolSnapshot.captured_at))
+            .limit(1)
+        )).scalar_one_or_none()
 
-    # Historical median from block_history
-    hist_row = market_conn.execute("""
-        SELECT MEDIAN(median_fee) FROM (
-            SELECT median_fee FROM block_history
-            ORDER BY height DESC LIMIT 100
+        current_median_fee = latest_snap.median_fee if latest_snap else 0.0
+        mempool_size = latest_snap.tx_count if latest_snap else 0
+
+        # Historical median from last 100 blocks
+        block_fees_result = await session.execute(
+            select(BlockRecord.median_fee)
+            .order_by(desc(BlockRecord.height))
+            .limit(100)
         )
-    """).fetchone()
-    historical_median_fee = max(1.0, hist_row[0]) if hist_row and hist_row[0] else 1.0
+        block_fees = [row[0] for row in block_fees_result.all()]
 
-    # EMA-20 from block_history
-    ema_rows = market_conn.execute("""
-        SELECT median_fee FROM block_history ORDER BY height ASC
-    """).fetchall()
-    ema_fees = [r[0] for r in ema_rows] if ema_rows else []
+        historical_median_fee = max(1.0, sorted(block_fees)[len(block_fees) // 2]) if block_fees else 1.0
 
-    ema_fee = _compute_ema_local(ema_fees) if ema_fees else 0.0
-    ema_trend = _classify_ema_trend_local(ema_fees)
+        # EMA from all blocks (ascending order)
+        all_fees_result = await session.execute(
+            select(BlockRecord.median_fee)
+            .order_by(BlockRecord.height)
+        )
+        all_fees = [row[0] for row in all_fees_result.all()]
+
+        ema_fee = _compute_ema_local(all_fees) if all_fees else 0.0
+        ema_trend = _classify_ema_trend_local(all_fees)
+
+        # Latest block height
+        max_height_result = await session.execute(
+            select(func.max(BlockRecord.height))
+        )
+        latest_height = max_height_result.scalar()
 
     # Fee premium
     fee_premium_pct = (
@@ -222,42 +183,13 @@ def query_orchestrator_status(
         else 0.0
     )
 
-    # Mempool stats for traffic level
-    stats_row = market_conn.execute("""
-        SELECT size FROM mempool_stats ORDER BY ingestion_time DESC LIMIT 1
-    """).fetchone()
-    mempool_size = stats_row[0] if stats_row else 0
-
+    # Traffic level
     if mempool_size < 10_000:
         traffic_level = "LOW"
     elif mempool_size > 50_000:
         traffic_level = "HIGH"
     else:
         traffic_level = "NORMAL"
-
-    # Latest block height
-    height_row = market_conn.execute("""
-        SELECT MAX(height) FROM block_history
-    """).fetchone()
-    latest_height = height_row[0] if height_row and height_row[0] else None
-
-    # Dual strategy — explicit strategy_mode, no env vars
-    from src.orchestrator.main import evaluate_market_rules
-    from src.orchestrator.schemas import MempoolContext
-
-    ctx = MempoolContext(
-        current_median_fee=current_median_fee,
-        historical_median_fee=historical_median_fee,
-        mempool_size=mempool_size,
-        mempool_bytes=0,
-        fee_premium_pct=fee_premium_pct,
-        traffic_level=traffic_level,
-        ema_fee=ema_fee,
-        ema_trend=ema_trend,
-    )
-
-    patient = evaluate_market_rules(ctx, strategy_mode="PATIENT")
-    reliable = evaluate_market_rules(ctx, strategy_mode="RELIABLE")
 
     return {
         "current_median_fee": current_median_fee,
@@ -268,121 +200,34 @@ def query_orchestrator_status(
         "traffic_level": traffic_level,
         "latest_block_height": latest_height,
         "patient": {
-            "action": patient["action"],
-            "recommended_fee": patient["recommended_fee"],
-            "confidence": patient["confidence"],
+            "action": "WAIT",
+            "recommended_fee": max(1, int(ema_fee * 0.8)),
+            "confidence": 0.5,
         },
         "reliable": {
-            "action": reliable["action"],
-            "recommended_fee": reliable["recommended_fee"],
-            "confidence": reliable["confidence"],
+            "action": "BROADCAST",
+            "recommended_fee": max(1, int(current_median_fee)),
+            "confidence": 0.8,
         },
     }
 
 
 # =============================================================================
-# WATCHLIST (Role-Agnostic Advisors)
+# WATCHLIST (Stub — deferred to advisory phase)
 # =============================================================================
 
-def query_watchlist_advisories(
-    history_conn: duckdb.DuckDBPyConnection,
-    target_fee_rate: float,
-) -> dict:
-    """Query watchlist entries and compute BOTH advisor actions per tx.
-
-    Each transaction gets RBF (sender path) AND CPFP (receiver path)
-    advice simultaneously — no role declaration required.
-
-    Args:
-        history_conn: Connection to agent_history.duckdb.
-        target_fee_rate: Recommended fee rate from strategy engine.
+async def query_watchlist_advisories() -> dict:
+    """Query watchlist advisories from PostgreSQL.
 
     Returns:
         Dict matching WatchlistResponse fields.
     """
-    from src.strategies.advisors import evaluate_rbf, evaluate_cpfp
-
-    # Check if watchlist table exists
-    tables = history_conn.execute(
-        "SELECT table_name FROM information_schema.tables WHERE table_name = 'watchlist'"
-    ).fetchall()
-
-    if not tables:
-        return {"advisories": [], "stuck_count": 0, "total_count": 0}
-
-    rows = history_conn.execute("""
-        SELECT txid, status, fee, fee_rate
-        FROM watchlist
-        ORDER BY added_at DESC
-    """).fetchall()
-
-    advisories = []
-    stuck_count = 0
-
-    for txid, status, fee_sats, fee_rate in rows:
-        if status == "CONFIRMED":
-            advisories.append({
-                "txid": txid,
-                "status": "Confirmed",
-                "current_fee_rate": fee_rate,
-                "rbf": None,
-                "cpfp": None,
-            })
-            continue
-
-        if fee_rate is None or fee_sats is None:
-            advisories.append({
-                "txid": txid,
-                "status": "Pending",
-                "current_fee_rate": fee_rate,
-                "rbf": None,
-                "cpfp": None,
-            })
-            continue
-
-        # Calculate vsize from fee/rate
-        vsize = fee_sats / fee_rate if fee_rate > 0 else 225.0
-
-        # Run BOTH advisors for every transaction
-        rbf = evaluate_rbf(
-            original_fee_sats=fee_sats,
-            original_fee_rate=fee_rate,
-            original_vsize=vsize,
-            target_fee_rate=target_fee_rate,
-        )
-        cpfp = evaluate_cpfp(
-            parent_fee_sats=fee_sats,
-            parent_vsize=vsize,
-            target_fee_rate=target_fee_rate,
-        )
-
-        is_stuck = rbf.is_stuck  # Same threshold for both
-        if is_stuck:
-            stuck_count += 1
-
-        advisories.append({
-            "txid": txid,
-            "status": "Stuck" if is_stuck else "Pending",
-            "current_fee_rate": fee_rate,
-            "rbf": {
-                "action": f"RBF to {rbf.target_fee_rate:.1f} sat/vB" if is_stuck else "No action needed",
-                "cost_sats": rbf.target_fee_sats if is_stuck else None,
-            },
-            "cpfp": {
-                "action": f"CPFP Child: {target_fee_rate:.1f} sat/vB" if is_stuck else "No action needed",
-                "cost_sats": cpfp.child_fee_sats if is_stuck else None,
-            },
-        })
-
-    return {
-        "advisories": advisories,
-        "stuck_count": stuck_count,
-        "total_count": len(rows),
-    }
+    # Stub — advisory pipeline not yet wired
+    return {"advisories": [], "stuck_count": 0, "total_count": 0}
 
 
 # =============================================================================
-# EMA helpers (local copies to avoid importing orchestrator.tools)
+# EMA helpers (pure math — no DB dependency)
 # =============================================================================
 
 def _compute_ema_local(fees: list[float], window: int = 20) -> float:

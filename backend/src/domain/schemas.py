@@ -224,3 +224,26 @@ class ConfirmedBlock(BaseModel):
         description="Fee and mining metadata",
     )
 
+
+# ============================================================================
+# Fee Advisory Models (RBF / CPFP)
+# ============================================================================
+
+
+class FeeAdvisory(BaseModel):
+    """Fee optimization advisory for a tracked transaction.
+
+    Covers both RBF (sender) and CPFP (receiver) paths.
+    Source formulas: BIP-125 (RBF), package relay (CPFP).
+    See .agent/skills/bitcoin/SKILL.md for protocol mechanics.
+    """
+
+    model_config = ConfigDict(strict=True)
+
+    txid: str = Field(..., description="Transaction ID (64-char hex)")
+    current_fee_rate: float = Field(..., description="Current fee rate in sat/vB")
+    target_fee_rate: float = Field(..., description="Market target fee rate in sat/vB")
+    rbf_fee_sats: int | None = Field(None, description="RBF replacement total fee (sats)")
+    cpfp_fee_sats: int | None = Field(None, description="CPFP child tx fee (sats)")
+    action: str = Field(..., description="BUMP | WAIT | CONFIRMED")
+

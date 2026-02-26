@@ -22,12 +22,12 @@ default:
     @just --list
 
 # ==========================================
-# INFRASTRUCTURE (Docker / Redpanda)
+# INFRASTRUCTURE (Docker: Redpanda + PostgreSQL)
 # ==========================================
 
 # Start the infrastructure stack in detached mode
 infra-up:
-    @echo "{{green}}🚀 Starting Redpanda infrastructure...{{reset}}"
+    @echo "{{green}}🚀 Starting infrastructure (Redpanda, PostgreSQL)...{{reset}}"
     cd infra && docker compose up -d
     @echo "{{green}}✅ Infrastructure is ready.{{reset}}"
 
@@ -43,7 +43,7 @@ infra-status:
     @echo "{{green}}🔍 Checking Docker containers...{{reset}}"
     @docker ps --format "table {{{{.Names}}}}\t{{{{.Status}}}}\t{{{{.Ports}}}}"
 
-# Tail logs from Redpanda
+# Tail logs from infrastructure
 infra-logs:
     cd infra && docker compose logs -f
 
@@ -54,23 +54,31 @@ infra-logs:
 # Run the Mempool WebSocket Ingestor (The "Radar")
 radar:
     @echo "{{green}}📡 Launching Mempool Ingestor (Topic: mempool-raw)...{{reset}}"
-    cd backend && uv run python -m src.ingestors.mempool_ws
+    cd backend && uv run python -m src.workers.ingestor
 
-# Run the DuckDB Storage Consumer
-storage:
-    @echo "📦 Starting DuckDB Storage Consumer..."
-    cd backend && uv run python -m src.storage.duckdb_consumer
+# Run the State Consumer (Kafka → PostgreSQL materializer)
+state-writer:
+    @echo "{{green}}📦 Starting State Consumer (Kafka → PostgreSQL)...{{reset}}"
+    cd backend && uv run python -m src.workers.state_consumer
 
-# Backfill 24h of block history (idempotent, safe to re-run)
-backfill:
-    @echo "{{green}}📦 Running block history backfill...{{reset}}"
-    uv run python scripts/backfill_history.py
-    @echo "{{green}}✅ Backfill complete.{{reset}}"
-
-# Run orchestrator locally (for development)
+# Run orchestrator locally (for development — pending Phase 6)
 orchestrator:
-    @echo "{{green}}🧠 Running AI Orchestrator locally...{{reset}}"
-    cd backend && uv run python -m src.orchestrator.main
+    @echo "{{green}}🧠 Running Orchestrator locally...{{reset}}"
+    cd backend && uv run python -m src.workers.orchestrator
+
+# Backfill last 144 blocks (~24h) from mempool.space REST API
+backfill:
+    @echo "{{green}}📥 Backfilling last 144 blocks (24h)...{{reset}}"
+    cd backend && uv run python -m scripts.backfill_blocks
+
+# ==========================================
+# API SERVER (FastAPI)
+# ==========================================
+
+# Start the FastAPI data layer on port 8000
+api:
+    @echo "{{green}}🔌 Starting FastAPI API server (port 8000)...{{reset}}"
+    cd backend && uv run uvicorn src.api.main:app --reload --port 8000
 
 # ==========================================
 # FRONTEND (Next.js via Docker)
@@ -86,15 +94,6 @@ dashboard:
         -p 3000:3000 \
         node:20-alpine \
         sh -c "npm install && npm run dev -- -H 0.0.0.0"
-
-# ==========================================
-# API SERVER (FastAPI — read-only DuckDB)
-# ==========================================
-
-# Start the FastAPI data layer on port 8000
-api:
-    @echo "{{green}}🔌 Starting FastAPI API server (port 8000)...{{reset}}"
-    cd backend && uv run uvicorn src.api.main:app --reload --port 8000
 
 # ==========================================
 # TESTING
@@ -122,28 +121,3 @@ sync:
     @echo "{{green}}📦 Syncing Backend dependencies...{{reset}}"
     cd backend && uv sync
     @echo "{{green}}✅ Backend dependencies synced.{{reset}}"
-
-# Debug the DuckDB database
-debug-db:
-    @echo "🔍 Running DB Debug Script..."
-    uv run python scripts/debug_db.py
-
-# ==========================================
-# AI ORCHESTRATOR (Phase 2)
-# ==========================================
-
-# Start AI infrastructure (Ollama + Orchestrator)
-ai-up:
-    @echo "{{green}}🧠 Starting AI Infrastructure...{{reset}}"
-    cd infra && docker compose up -d ollama orchestrator
-    @echo "{{green}}✅ AI services started.{{reset}}"
-
-# Stop AI infrastructure
-ai-down:
-    @echo "{{green}}🧠 Stopping AI Infrastructure...{{reset}}"
-    cd infra && docker compose stop ollama orchestrator
-    @echo "{{green}}💤 AI services stopped.{{reset}}"
-
-# View orchestrator logs
-ai-logs:
-    docker logs -f orchestrator

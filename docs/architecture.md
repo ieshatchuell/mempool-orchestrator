@@ -1,301 +1,347 @@
 # System Architecture
 
-## 1. High-Level Data Flow (V6)
-The system follows a **Decoupled Monorepo + CQRS** pattern. Local processes handle ingestion and storage, containerized AI handles inference, and Redis serves as the read-optimized layer for the dashboard API. The Frontend (Next.js) is physically separated from the Backend (Data Engineering).
+## 1. High-Level Overview
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     HOST MACHINE (Local Processes)              │
-│                                                                 │
-│  [External WebSocket: mempool.space]                            │
-│        │                                                        │
-│        v (Async Streaming — "Radar")                            │
-│  [Ingestor: backend/src/ingestors/mempool_ws]                   │
-│        │                                                        │
-│        v (Kafka Protocol)                                       │
-│  ┌─────────────────┐    ┌──────────────────────────────────┐    │
-│  │ Redpanda        │    │ data/market/mempool_data.duckdb  │    │
-│  │ (Docker)        │───▶│ (Write Lock: Local Process)      │    │
-│  └─────────────────┘    └────────────┬─────────────────────┘    │
-│                                      │ _project_to_redis()      │
-│                                      v                          │
-│                         ┌──────────────────────────────────┐    │
-│                         │ Redis (Docker — Alpine)          │    │
-│                         │ dashboard:* keys (~10 KB)        │    │
-│                         └────────────┬─────────────────────┘    │
-│                                      │                          │
-│                                      v                          │
-│                         ┌──────────────────────────────────┐    │
-│                         │ FastAPI (localhost:8000)          │    │
-│                         │ Redis GET → JSON → Response       │    │
-│                         └────────────┬─────────────────────┘    │
-│                                      │                          │
-│                                      v                          │
-│                         ┌──────────────────────────────────┐    │
-│                         │ Next.js Dashboard (:3000)        │    │
-│                         └──────────────────────────────────┘    │
-│                                                                 │
-└──────────────────────────────────┬──────────────────────────────┘
-                                   │ :ro volume mount
-┌──────────────────────────────────│──────────────────────────────┐
-│                     DOCKER NETWORK                              │
-│                                  v                              │
-│  ┌─────────────────┐    ┌──────────────────────────────────┐    │
-│  │ Ollama          │◀───│ Orchestrator                     │    │
-│  │ (Llama 3.2)     │    │ (Read-Only DuckDB Access)        │    │
-│  └─────────────────┘    └──────────────────────────────────┘    │
-│                                  │                              │
-│                                  v :rw volume mount             │
-│                         ┌──────────────────────────────────┐    │
-│                         │ data/history/agent_history.duckdb│    │
-│                         └──────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────────────┘
+The system implements an **Event-Driven Architecture (EDA)** with **Clean Architecture** layers. Data flows from the Bitcoin network through Kafka to PostgreSQL, and is served to the dashboard via a read-only FastAPI API.
+
+```mermaid
+graph LR
+    subgraph External
+        WS["mempool.space<br/>WebSocket API"]
+        REST["mempool.space<br/>REST API"]
+    end
+
+    subgraph Workers
+        ING["Ingestor<br/>(Radar)"]
+        SC["State Consumer<br/>(Materializer)"]
+    end
+
+    subgraph Infrastructure
+        RP["Redpanda<br/>(Kafka)"]
+        PG["PostgreSQL 16<br/>(MVCC)"]
+    end
+
+    subgraph Presentation
+        API["FastAPI<br/>(Read-Only)"]
+        UI["Next.js<br/>(Dashboard)"]
+    end
+
+    WS -->|"async WS"| ING
+    REST -->|"Signal & Fetch"| ING
+    ING -->|"produce"| RP
+    RP -->|"consume"| SC
+    SC -->|"INSERT/UPSERT"| PG
+    PG -->|"SELECT"| API
+    API -->|"JSON"| UI
 ```
 
-### CQRS Concurrency Pattern
+## 2. Clean Architecture Layers
 
-| Component | Runtime | Access | Target | Purpose |
-|-----------|---------|--------|--------|---------|
-| Storage Consumer | Local (uv) | **Write** | DuckDB | Kafka → DuckDB persistence |
-| Storage Consumer | Local (uv) | **Write** | Redis | Post-flush projection (dashboard views) |
-| FastAPI API | Local (uv) | **Read** | Redis | Sub-ms dashboard reads |
-| AI Orchestrator | Docker | **Read-Only** | DuckDB | Query via `:ro` mount |
+The codebase follows strict dependency rules — inner layers never import from outer layers.
 
-> **Critical (ADR-013):** FastAPI never touches DuckDB. The Storage Consumer projects pre-computed dashboard views to Redis after each flush. This eliminates the DuckDB file-lock conflict entirely.
+```mermaid
+graph TB
+    subgraph "Domain Layer (Pure)"
+        D["domain/schemas.py<br/>Pydantic V2 Contracts<br/><i>Zero external deps</i>"]
+    end
 
-[External REST API: mempool.space/api]
-      |
-      v (On-Demand Fetch - "Fetcher")
-[API Client: src.ingestors.mempool_api]
+    subgraph "Infrastructure Layer"
+        DB["infrastructure/database/<br/>SQLAlchemy 2.0 Async<br/>session.py + models.py"]
+        MSG["infrastructure/messaging/<br/>aiokafka Producer<br/>producer.py"]
+    end
 
-## 2. Component Breakdown
+    subgraph "Application Layer"
+        W1["workers/ingestor.py<br/>WS → Kafka"]
+        W2["workers/state_consumer.py<br/>Kafka → PostgreSQL"]
+        W3["workers/tx_hunter.py<br/>RBF/CPFP Advisory<br/><i>(Phase 7)</i>"]
+    end
 
-### A. Ingestion Layer (The "Radar") - Real-Time Event Filtering
-The Radar pattern provides a lightweight, metadata-first approach to ingesting Bitcoin mempool data.
+    subgraph "Presentation Layer"
+        Q["api/queries.py<br/>Async SQLAlchemy Queries"]
+        M["api/main.py<br/>FastAPI Endpoints"]
+        S["api/schemas.py<br/>Response Models"]
+    end
 
-#### Data Contracts & Validation
-- **Schema Definition:** `src/schemas.py`
-  - Pydantic v2 models with `strict=True` for compile-time type safety.
-  - **Monetary Precision:** All values (`fees`, `totalFees`) are strictly `int` (Satoshis) - NEVER float.
-  - **Alias Mapping:** Automatic camelCase ↔ snake_case conversion via `alias_generator=to_camel`.
-  - **Models:**
-    - `MempoolStats`: Real-time mempool state (size, bytes, fees).
-    - `MempoolBlock`: Projected block statistics (blockSize, medianFee, feeRange).
-    - `Transaction`: Full transaction schema for REST API integration.
+    subgraph "Core"
+        C["core/config.py<br/>pydantic-settings"]
+    end
 
-#### Radar Ingestion Pattern
-**Source:** Mempool.space WebSocket API (`wss://mempool.space/api/v1/ws`)
+    W1 --> D
+    W1 --> MSG
+    W1 --> C
+    W2 --> D
+    W2 --> DB
+    W2 --> C
+    Q --> DB
+    M --> Q
+    M --> S
+    M --> C
+    DB --> C
+    MSG --> C
 
-**Event Routing Logic** (`src/ingestors/mempool_ws.py`):
-1. **Silent Filter:** `conversions` messages are dropped (noise).
-2. **Stats Events:** Key `mempoolInfo` → Validated as `MempoolStats` → Kafka key: `stats`.
-3. **Block Events:** Key `mempool-blocks` → Validated as `List[MempoolBlock]` → Kafka key: `mempool_block`.
-4. **Confirmed Blocks (Signal & Fetch):** Key `block` → REST fetch `GET /api/v1/block/{hash}` → Validated as `ConfirmedBlock` → Kafka key: `confirmed_block`.
-5. **Validation:** Fail-fast strategy. Invalid payloads are logged and dropped to protect downstream storage.
-
-### B. Storage Layer (The "Vault")
-- **Engine:** **DuckDB** (In-process OLAP).
-- **Strategy:** Buffered Consumer (batch size: 50) with Pydantic validation.
-- **Schema Strategy (Silver Layer):** Direct write to structured tables (no raw JSON dump).
-    - `mempool_stats`: High-frequency metrics (ingestion_time, size, bytes, total_fee, min_fee).
-    - `mempool_stream`: Speculative projected blocks from WebSocket (block_index, block_size, n_tx, total_fees, median_fee).
-    - `block_history`: Confirmed mined blocks (height, block_hash, block_size, n_tx, total_fees, median_fee, pool_name).
-- **Data Types:** Strict mapping. Fees are stored as `UBIGINT` (Satoshis) to prevent floating-point errors.
-
-### C. The Fetcher (REST Client)
-- **Purpose:** On-demand fetching of confirmed block data for auditing and historical backfill.
-- **Implementation:** `src/ingestors/mempool_api.py`
-  - **Client:** `httpx.AsyncClient` for async HTTP requests.
-  - **Configuration:** Reads base URL from `settings.mempool_api_url` (no hardcoding).
-  - **Error Handling:** Custom `MempoolAPIError` for HTTP failures (4xx, 5xx), network errors, and JSON parsing issues.
-  - **Context Manager:** Proper resource management with `async with MempoolAPI()`.
-- **Methods:**
-  - `get_block_stats(block_hash: str) -> dict`: Fetch block header data from `/block/{hash}`.
-- **Testing:** Comprehensive test suite (`tests/test_api.py`) using `respx` to mock HTTP requests (13 tests).
-
-### D. The Dashboard API (CQRS Read Layer)
-- **Purpose:** Low-latency data access for the Next.js frontend.
-- **Architecture:** CQRS — DuckDB writes, Redis reads (ADR-013).
-- **Write Side:** `DuckDBConsumer._project_to_redis()` runs after each flush, computing dashboard views from DuckDB and writing them to 5 Redis keys.
-- **Read Side:** FastAPI endpoints do `Redis GET → JSON → Pydantic validation → Response`.
-- **Cache Miss:** If Redis has no data (projector not yet run), endpoints return valid empty-state defaults — never a 500.
-- **Redis Keys:**
-  - `dashboard:mempool_stats` — KPIs, 1h deltas
-  - `dashboard:fee_distribution` — 7 fee bands
-  - `dashboard:recent_blocks` — Last 10 confirmed blocks
-  - `dashboard:orchestrator_status` — Strategy mode, EMA, traffic
-  - `dashboard:watchlist` — RBF/CPFP advisories
-- **Total Redis footprint:** < 10 KB.
-- **Launch:** `just api` (FastAPI on port 8000)
-
-### D.1 Frontend Data Layer (TanStack Query v5 — ADR-014)
-- **Purpose:** Real-time polling from the Next.js dashboard to the FastAPI API.
-- **Library:** TanStack Query v5 — production-grade server state management (cache, polling, retry, devtools).
-- **Architecture:**
-
-```
-  Next.js (Docker :3000)         FastAPI (Host :8000)
-  ┌──────────────────────────┐   ┌─────────────────────┐
-  │ app/providers.tsx         │   │                     │
-  │  └─ QueryClientProvider   │   │                     │
-  │      └─ page.tsx          │   │                     │
-  │          ├─ <KpiCards>    │──▶│ /api/mempool/stats   │
-  │          ├─ <FeeHist>     │──▶│ /api/mempool/fee-*   │
-  │          ├─ <BlocksTable> │──▶│ /api/blocks/recent   │
-  │          ├─ <Advisors>    │──▶│ /api/watchlist        │
-  │          └─ <StatusBar>   │──▶│ /api/orchestrator/*   │
-  └──────────────────────────┘   └─────────────────────┘
-         hooks/use-*.ts              lib/api.ts
-         (useQuery + poll)           (fetchAPI + no-store)
+    style D fill:#2d6a4f,color:#fff
+    style C fill:#1b4332,color:#fff
 ```
 
-- **Polling Intervals (staggered by data volatility):**
+## 3. Data Flow (Detailed)
 
-| Hook | Endpoint | `refetchInterval` | `staleTime` | Rationale |
-|---|---|---|---|---|
-| `useMempoolStats` | `/api/mempool/stats` | 5s | 3s | Most volatile: KPIs change every flush |
-| `useFeeDistribution` | `/api/mempool/fee-distribution` | 10s | 8s | Histogram shifts slower |
-| `useOrchestratorStatus` | `/api/orchestrator/status` | 10s | 8s | EMA/traffic follow stats |
-| `useWatchlist` | `/api/watchlist` | 15s | 12s | Advisories recalculated per flush |
-| `useRecentBlocks` | `/api/blocks/recent` | 30s | 25s | Blocks mined ~10 min |
+### 3.1 Ingestion Pipeline (The "Radar")
 
-- **SSR Safety (ADR-014):**
-  - **Docker networking:** `fetchAPI()` uses `host.docker.internal:8000` on server, `localhost:8000` on client.
-  - **Cache bypass:** `fetch(..., { cache: "no-store" })` disables Next.js aggressive caching.
-  - **Data guard:** All components use `if (!data) return <Skeleton />` instead of `data!` non-null assertion.
-- **Types:** `lib/types.ts` — 8 interfaces mapped 1:1 from `backend/src/api/schemas.py`.
-- **Config:** `NEXT_PUBLIC_API_URL` (client), `INTERNAL_API_URL` (SSR override).
+The Ingestor connects to the mempool.space WebSocket API and routes validated events to Kafka by key:
 
-### E. The Orchestrator (Neuro-Symbolic Brain)
+```mermaid
+flowchart TD
+    WS["WebSocket<br/>mempool.space"] --> PARSE["JSON Parse"]
+    PARSE --> FILTER{"Noise Filter<br/><i>conversions, init,<br/>loadingIndicators</i>"}
+    FILTER -->|"Drop"| NULL["∅"]
+    FILTER -->|"Pass"| ROUTE{"Route by Key"}
 
-The Orchestrator implements a **Safe-Guarded Hybrid AI** pattern:
+    ROUTE -->|"mempoolInfo"| V1["Validate<br/>MempoolStats"]
+    ROUTE -->|"mempool-blocks"| V2["Validate<br/>MempoolBlock[]"]
+    ROUTE -->|"block"| SIGNAL["Signal & Fetch"]
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│                    DECISION PIPELINE                           │
-│                                                                │
-│  MempoolContext ─────┐                                         │
-│  (from DuckDB)       │                                         │
-│                      v                                         │
-│              ┌───────────────────┐                             │
-│              │ evaluate_market   │  LAYER 1: PYTHON (Critical) │
-│              │ _rules()          │  - Deterministic            │
-│              └─────────┬─────────┘  - Zero latency             │
-│                        │                                       │
-│                        v                                       │
-│              ┌───────────────────┐                             │
-│              │ MarketDecision    │  (action, recommended_fee)  │
-│              └─────────┬─────────┘                             │
-│                        │                                       │
-│                        v                                       │
-│              ┌───────────────────┐                             │
-│              │ get_ai_reasoning()│  LAYER 2: LLM (Non-Critical)│
-│              │ via Llama 3.2    │  - Generates commentary      │
-│              └─────────┬─────────┘  - Fallback if unavailable  │
-│                        │                                       │
-│                        v                                       │
-│              ┌───────────────────┐                             │
-│              │ AgentDecision     │  Final output with reasoning│
-│              └───────────────────┘                             │
-│                                                                │
-└────────────────────────────────────────────────────────────────┘
+    SIGNAL --> FETCH["REST GET<br/>/v1/block/{hash}"]
+    FETCH --> V3["Validate<br/>ConfirmedBlock"]
+
+    V1 -->|'key=stats'| KAFKA["Redpanda<br/>mempool-raw"]
+    V2 -->|'key=mempool_block'| KAFKA
+    V3 -->|'key=confirmed_block'| KAFKA
 ```
 
-#### The Sidecar Pattern
+### 3.2 State Consumer (Kafka → PostgreSQL)
 
-The AI acts as a **non-critical sidecar**:
+The State Consumer materializes Kafka events into PostgreSQL tables based on message key:
 
-| Scenario | Python Logic | AI Narrative | Result |
-|----------|-------------|--------------|--------|
-| Normal | ✅ Computes decision | ✅ Generates reasoning | Full decision + explanation |
-| AI Timeout | ✅ Computes decision | ⏱️ Timeout (30s) | Decision + fallback text |
-| AI Offline | ✅ Computes decision | ❌ Error caught | Decision + fallback text |
+```mermaid
+flowchart LR
+    KAFKA["Redpanda<br/>mempool-raw<br/><i>group: mempool-state-writers</i>"] --> ROUTE{"Key?"}
 
-> **Key Insight:** The system **never fails** to make a decision. The LLM provides "nice to have" commentary but cannot block the critical path.
+    ROUTE -->|"stats"| S["MempoolStats<br/>.model_validate_json()"]
+    ROUTE -->|"confirmed_block"| B["ConfirmedBlock<br/>.model_validate_json()"]
+    ROUTE -->|"mempool_block"| SKIP["logger.debug()<br/><i>Skip (Phase 6.5)</i>"]
 
-#### Performance Characteristics
+    S --> INSERT["INSERT<br/>mempool_snapshots<br/><i>append-only</i>"]
+    B --> UPSERT["INSERT ... ON CONFLICT<br/>DO NOTHING<br/>blocks<br/><i>idempotent by height</i>"]
 
-| Metric | Pure LLM (v1) | Neuro-Symbolic (v2) |
-|--------|--------------|---------------------|
-| Decision Latency | ~40s | ~1.3s |
-| JSON Parse Errors | Frequent | Zero |
-| Arithmetic Errors | Occasional | Zero |
-| Graceful Degradation | ❌ | ✅ |
+    INSERT --> PG["PostgreSQL"]
+    UPSERT --> PG
+```
 
-### F. Common Infrastructure & Configuration
-- **Kafka Wrapper:** `MempoolProducer` with non-blocking `poll(0)` and delivery callbacks.
-- **Configuration:** `src/config.py` using Pydantic Settings. Enforces strict types and strips whitespace from environment variables.
-  - `kafka_bootstrap_servers`: Kafka broker connection string
-  - `mempool_topic`: Target Kafka topic
-  - `mempool_ws_url`: WebSocket URL for real-time data
-  - `mempool_api_url`: REST API base URL
-  - `duckdb_path`: Database file path
-  - `duckdb_batch_size`: Batch flush size
-  - `agent_history_path`: Agent decision history database
-  - `redis_url`: Redis connection URL (CQRS read layer)
+### 3.3 API Layer (Read-Only Presentation)
 
-### G. Persistence Layer (Strict Data Isolation)
+```mermaid
+flowchart LR
+    UI["Next.js<br/>Dashboard"] -->|"HTTP GET"| API["FastAPI<br/>:8000"]
 
-The system implements a **Strict Data Isolation** pattern with physically separated databases:
+    API --> Q1["/api/mempool/stats"]
+    API --> Q2["/api/blocks/recent"]
+    API --> Q3["/api/orchestrator/status"]
+    API --> Q4["/api/watchlist"]
 
-| Database | Path | Writer | Reader | Mount |
-|----------|------|--------|--------|-------|
-| Market Data | `data/market/mempool_data.duckdb` | Storage Service (Local) | Orchestrator (Docker) | `:ro` |
-| Agent Memory | `data/history/agent_history.duckdb` | Orchestrator (Docker) | Auditing/Backtest | `:rw` |
+    Q1 -->|"SELECT"| PG["PostgreSQL"]
+    Q2 -->|"SELECT"| PG
+    Q3 -->|"SELECT"| PG
+    Q4 -->|"Stub"| STUB["Empty State<br/><i>Phase 7</i>"]
+```
 
-> **Key Insight:** Separating RO and RW data into distinct directories enables strict Docker volume permissions. The `market/` folder is mounted read-only, while `history/` is mounted read-write.
+## 4. Component Breakdown
 
-**Schema (`decision_history` table):**
-- `timestamp`: TIMESTAMP (UTC)
-- `action`: VARCHAR (WAIT/BROADCAST)
-- `current_fee`: UBIGINT (sat/vB)
-- `recommended_fee`: UBIGINT (sat/vB)
-- `ai_confidence`: DOUBLE (0.0-1.0)
-- `ai_reasoning`: VARCHAR (LLM explanation)
-- `model_version`: VARCHAR (e.g., "neuro-symbolic-v1")
+### A. Domain Layer — `src/domain/schemas.py`
 
-> **Connection Strategy:** `AgentHistory` keeps a persistent DuckDB connection (opened once in `__init__`, closed explicitly via `close()`). This is safe because the orchestrator is the sole writer to this file.
+Pure Pydantic V2 contracts. Zero imports from databases, Kafka, or frameworks.
 
-## 3. Package Structure Standards
-- `src.common`: Shared infrastructure clients.
-- `src.ingestors`: External data source connectors (WebSocket + REST API).
-- `src.schemas`: Data contracts and Pydantic models.
-- `src.storage`: Persistence logic.
-- `src.strategies`: Fee strategy functions (naive, SMA, EMA, orchestrator) — shared by dashboard and backtest.
-- `src.utils`: Stateless helpers.
+| Schema | Purpose | Key Fields |
+|---|---|---|
+| `MempoolStats` | Mempool state from WS | `mempool_info.size`, `.bytes`, `.total_fee` |
+| `MempoolBlock` | Projected block template | `block_size`, `median_fee`, `fee_range` |
+| `ConfirmedBlock` | Mined block (Signal & Fetch) | `height`, `id`, `tx_count`, `extras.median_fee` |
+| `FeeAdvisory` | RBF/CPFP recommendation | `txid`, `action`, `rbf_fee_sats`, `cpfp_fee_sats` |
 
-## 4. Developer Experience (DX) & Quality Assurance
-- **Manager:** `uv`.
-- **Runner:** `Just`.
-- **Testing Stack:**
-  - **Framework:** `pytest` (Root configuration in `pyproject.toml`).
-  - **Mocks:** `pytest-mock` and `unittest.mock` for isolating Kafka and WebSocket logic.
-  - **HTTP Mocking:** `respx` for REST API testing.
-  - **Async:** `pytest-asyncio` for coroutine testing.
-  - **Coverage:**
-    - `tests/test_schemas.py`: Contract validation (Happy/Sad paths).
-    - `tests/test_ingestor.py`: Routing logic and error handling.
-    - `tests/test_kafka_producer.py`: Infrastructure wrapper behavior.
-    - `tests/test_config.py`: Environment variable loading and validation.
-    - `tests/test_api.py`: REST API client behavior.
-    - `tests/test_agent_history.py`: Agent decision persistence.
-    - `tests/test_api_server.py`: FastAPI endpoints (fakeredis).
-    - *170 total backend tests.*
-  - **Frontend Types:** `lib/types.ts` — 8 strict interfaces (zero `any`).
+**Conventions:**
+- All monetary values stored as `int` (Satoshis) — never `float`
+- `ConfigDict(strict=True)` enforced on all models
+- `alias_generator=to_camel` for automatic API field mapping
 
-## 5. Architectural Patterns
+### B. Infrastructure — Database (`src/infrastructure/database/`)
 
-### Hybrid Signal & Fetch
-- **Signal (WebSocket):** Low-latency stream for mempool state changes.
-- **Fetch (REST API):** On-demand retrieval for confirmed blocks and historical data.
-- **Rationale:** Avoids message size limits on Kafka (1MB default) and provides data completeness.
+| File | Purpose |
+|---|---|
+| `session.py` | Async SQLAlchemy engine (`asyncpg`, pool_size=5, max_overflow=10) |
+| `models.py` | ORM models: `BlockRecord`, `MempoolSnapshot`, `AdvisoryRecord` |
 
-### Medallion Architecture (Simplified)
-- **Bronze Layer:** Eliminated (direct validation at ingestion boundary).
-- **Silver Layer:** Structured, typed tables with Pydantic validation.
-- **Gold Layer:** Future analytical views and aggregations.
+**PostgreSQL Tables:**
 
-### Data Validation Strategy
-- **Boundary Validation:** All external data validated with Pydantic at ingestion.
-- **Type Safety:** Strict mode enforced (`strict=True`).
-- **Monetary Precision:** Integer-only for fees (Satoshis) to prevent floating-point errors.
+```mermaid
+erDiagram
+    blocks {
+        int height PK
+        varchar hash UK
+        bigint timestamp
+        int tx_count
+        int size
+        float median_fee
+        bigint total_fees
+    }
+
+    mempool_snapshots {
+        int id PK
+        timestamptz captured_at
+        int tx_count
+        bigint total_bytes
+        bigint total_fee_sats
+        float median_fee
+    }
+
+    advisories {
+        int id PK
+        varchar txid
+        timestamptz created_at
+        varchar action
+        float current_fee_rate
+        float target_fee_rate
+        bigint rbf_fee_sats
+        bigint cpfp_fee_sats
+    }
+```
+
+### C. Infrastructure — Messaging (`src/infrastructure/messaging/`)
+
+| File | Purpose |
+|---|---|
+| `producer.py` | `MempoolProducer` — async aiokafka wrapper with `start()`, `send()`, `stop()` lifecycle |
+
+### D. Workers (`src/workers/`)
+
+| Worker | Role | Input → Output |
+|---|---|---|
+| `ingestor.py` | Radar | WebSocket → Kafka |
+| `state_consumer.py` | Materializer | Kafka → PostgreSQL |
+| `tx_hunter.py` | Advisory Engine | Kafka → advisories table *(Phase 7)* |
+
+### E. API Layer (`src/api/`)
+
+| File | Purpose |
+|---|---|
+| `main.py` | FastAPI app, lifespan (DDL bootstrap + dispose), CORS, endpoints |
+| `queries.py` | Async SQLAlchemy query functions (read-only) |
+| `schemas.py` | Response Pydantic models |
+
+### F. Core (`src/core/`)
+
+| File | Purpose |
+|---|---|
+| `config.py` | `pydantic-settings` singleton. All env vars centralized. |
+
+**Configuration Fields:**
+- `kafka_bootstrap_servers` — Redpanda connection
+- `mempool_topic` — Kafka topic name
+- `mempool_ws_url` — WebSocket endpoint
+- `mempool_api_url` — REST API base URL
+- `postgres_dsn` — SQLAlchemy async connection string
+
+### G. Frontend Data Layer (TanStack Query v5)
+
+```mermaid
+graph LR
+    subgraph "Next.js (Docker :3000)"
+        QC["QueryClientProvider"]
+        QC --> H1["useMempoolStats<br/><i>poll: 5s</i>"]
+        QC --> H2["useRecentBlocks<br/><i>poll: 30s</i>"]
+        QC --> H3["useOrchestratorStatus<br/><i>poll: 10s</i>"]
+        QC --> H4["useWatchlist<br/><i>poll: 15s</i>"]
+    end
+
+    subgraph "FastAPI (:8000)"
+        E1["/api/mempool/stats"]
+        E2["/api/blocks/recent"]
+        E3["/api/orchestrator/status"]
+        E4["/api/watchlist"]
+    end
+
+    H1 -->|fetchAPI| E1
+    H2 -->|fetchAPI| E2
+    H3 -->|fetchAPI| E3
+    H4 -->|fetchAPI| E4
+```
+
+## 5. Infrastructure (Docker Compose)
+
+```mermaid
+graph TB
+    subgraph "Docker Network"
+        RP["Redpanda<br/>:9092 (Kafka)<br/>:8080 (Console)"]
+        PG["PostgreSQL 16<br/>:5432<br/><i>mempool DB</i>"]
+        ORCH["Orchestrator<br/><i>sleep infinity</i><br/>(pending Phase 7)"]
+        DASH["Next.js<br/>:3000"]
+    end
+
+    subgraph "Host Machine (Local)"
+        ING["just radar<br/><i>Ingestor</i>"]
+        SC["just state-writer<br/><i>State Consumer</i>"]
+        API["just api<br/><i>FastAPI :8000</i>"]
+    end
+
+    ING -->|produce| RP
+    RP -->|consume| SC
+    SC -->|write| PG
+    PG -->|read| API
+    API -->|JSON| DASH
+```
+
+## 6. Project Structure
+
+```
+backend/
+├── src/
+│   ├── api/                    # Presentation Layer (FastAPI)
+│   │   ├── main.py             # App, lifespan, endpoints
+│   │   ├── queries.py          # Async SQLAlchemy queries
+│   │   └── schemas.py          # Response models
+│   ├── core/                   # Configuration
+│   │   └── config.py           # pydantic-settings singleton
+│   ├── domain/                 # Domain Layer (Pure)
+│   │   └── schemas.py          # Pydantic V2 contracts
+│   ├── infrastructure/         # Infrastructure Layer
+│   │   ├── database/
+│   │   │   ├── session.py      # Async engine + session factory
+│   │   │   └── models.py       # ORM models (BlockRecord, etc.)
+│   │   └── messaging/
+│   │       └── producer.py     # aiokafka async producer
+│   └── workers/                # Application Layer
+│       ├── ingestor.py         # WS → Kafka (Radar)
+│       ├── state_consumer.py   # Kafka → PostgreSQL
+│       └── tx_hunter.py        # RBF/CPFP (Phase 7)
+├── scripts/
+│   └── backfill_blocks.py      # Maintenance: 144-block initial load
+└── tests/
+    ├── test_config.py          # 12 tests
+    ├── test_schemas.py         # Contract validation
+    ├── test_ingestor.py        # Routing logic
+    ├── test_kafka_producer.py  # Producer wrapper
+    └── test_api.py             # REST client
+```
+
+## 7. Architectural Patterns
+
+### Event-Driven Architecture (EDA)
+- **Event Broker:** Redpanda (Kafka-compatible, ARM64-native)
+- **Topic:** `mempool-raw` — single topic, key-based routing (`stats`, `mempool_block`, `confirmed_block`)
+- **Consumer Group:** `mempool-state-writers` — single consumer materializing to PostgreSQL
+
+### Signal & Fetch
+- **Signal (WebSocket):** Low-latency stream for mempool state changes
+- **Fetch (REST API):** On-demand retrieval for confirmed block data (avoids 1MB Kafka message limit)
+
+### Clean Architecture
+- **Dependency Rule:** Domain → ∅ | Infrastructure → Domain + Core | Workers → All | API → Infrastructure + Domain
+- **Testability:** Each layer is independently testable with mocked dependencies
+
+### Idempotent Writes
+- `BlockRecord`: `INSERT ... ON CONFLICT (height) DO NOTHING`
+- `MempoolSnapshot`: Append-only (auto-increment PK)
+- Safe for Kafka consumer replay and backfill re-runs
+
+### Data Validation at Boundary
+- All external data validated with Pydantic V2 `strict=True` at ingestion
+- Invalid payloads logged and dropped — never corrupt downstream storage
+- Monetary values: integer-only (Satoshis) to prevent IEEE 754 precision errors
