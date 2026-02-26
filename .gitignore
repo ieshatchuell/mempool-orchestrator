@@ -12,11 +12,7 @@ wheels/
 # Environment variables
 .env
 
-# Database files (separated by permission type)
-data/market/*.duckdb
-data/history/*.duckdb
 .DS_Store
-data/history/*.duckdb.wal
 
 # Node.js (frontend — installed inside Docker, visible via volume mount)
 node_modules/

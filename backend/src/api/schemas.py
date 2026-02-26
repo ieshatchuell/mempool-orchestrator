@@ -1,6 +1,6 @@
 """Response schemas for the FastAPI data layer.
 
-All models are read-only projections of DuckDB data.
+All models are read-only projections of PostgreSQL data.
 Monetary values follow project convention: stored as int (Satoshis),
 displayed with explicit formatting fields when BTC output is needed.
 """

@@ -1440,3 +1440,106 @@ Instead of allowing open TXID inputs, the product vision will pivot towards an *
 ### Related Files
 - `frontend/hooks/use-watchlist.ts`
 - `backend/src/api/main.py`
+
+---
+
+## ADR-016: State Persistence Migration — DuckDB+Redis → PostgreSQL
+
+- **Date:** 2026-02-26
+- **Status:** ✅ IMPLEMENTED
+- **Phase:** EDA Refactor (Phases 1–6)
+
+### Context
+
+The transition from a monolithic architecture to an Event-Driven Architecture (EDA) with Redpanda exposed critical limitations in the existing storage stack:
+
+1. **DuckDB Single-Writer Lock:** DuckDB's append-only WAL enforces exclusive write access. With a Kafka consumer writing concurrently alongside the API and orchestrator reading, file lock contention caused `IOException` failures and required the CQRS Redis workaround.
+2. **Redis as Unnecessary Middleware:** The CQRS pattern (DuckDB writes → Redis projection → API reads) introduced eventual consistency bugs (ADR-015) and operational complexity for a volume that PostgreSQL's MVCC handles natively.
+3. **Ollama/PydanticAI Deprecation:** The AI sidecar (Llama 3.2) was deprecated in favor of deterministic Python logic, removing 2 Docker services and 3 dependencies.
+
+### Decision
+
+**Replace the entire DuckDB + Redis + Ollama stack with PostgreSQL as the single source of truth:**
+
+| Before | After |
+|---|---|
+| DuckDB (OLAP, single-writer) | PostgreSQL 16 (MVCC, concurrent R/W) |
+| Redis (CQRS read cache) | Direct async reads via SQLAlchemy |
+| confluent-kafka (sync) | aiokafka (async) |
+| Ollama + PydanticAI | Removed (deterministic Python only) |
+| Flat module structure | Clean Architecture (domain/infra/workers/api) |
+
+**Architecture — Before (DuckDB + Redis + Ollama):**
+
+```mermaid
+graph LR
+    WS["mempool.space<br/>WebSocket"] --> ING["Ingestor<br/><i>confluent-kafka (sync)</i>"]
+    ING --> RP["Redpanda"]
+    RP --> DUCK["DuckDB Consumer<br/><i>Single-Writer Lock ⚠️</i>"]
+    DUCK -->|"project_to_redis()"| REDIS["Redis<br/><i>CQRS Cache</i>"]
+    REDIS --> API["FastAPI<br/><i>Redis GET</i>"]
+    DUCK -->|":ro mount"| ORCH["Orchestrator<br/><i>Docker</i>"]
+    ORCH --> OLLAMA["Ollama<br/><i>Llama 3.2</i>"]
+    ORCH -->|":rw mount"| HIST["agent_history<br/>.duckdb"]
+    API --> UI["Next.js"]
+
+    style DUCK fill:#d32f2f,color:#fff
+    style REDIS fill:#e64a19,color:#fff
+    style OLLAMA fill:#e64a19,color:#fff
+```
+
+**Architecture — After (PostgreSQL + aiokafka):**
+
+```mermaid
+graph LR
+    WS["mempool.space<br/>WebSocket"] --> ING["Ingestor<br/><i>aiokafka (async)</i>"]
+    ING --> RP["Redpanda"]
+    RP --> SC["State Consumer<br/><i>MVCC — no locks ✅</i>"]
+    SC --> PG["PostgreSQL 16"]
+    PG --> API["FastAPI<br/><i>SQLAlchemy async</i>"]
+    API --> UI["Next.js"]
+
+    style SC fill:#2e7d32,color:#fff
+    style PG fill:#1b5e20,color:#fff
+```
+
+### Implementation
+
+1. **Domain Layer** (`src/domain/schemas.py`): Pydantic V2 contracts — zero DB imports.
+2. **Infrastructure - Database** (`src/infrastructure/database/`): SQLAlchemy 2.0 async engine + ORM models (`BlockRecord`, `MempoolSnapshot`, `AdvisoryRecord`).
+3. **Infrastructure - Messaging** (`src/infrastructure/messaging/`): `MempoolProducer` wrapping aiokafka with lifecycle management.
+4. **Workers:** `ingestor.py` (WS → Kafka), `state_consumer.py` (Kafka → PostgreSQL).
+5. **API:** Async SQLAlchemy queries, DDL bootstrap in lifespan, read-only endpoints.
+6. **Scripts:** `backfill_blocks.py` — flush + paginated REST fetch (144 blocks) + bulk idempotent insert.
+
+### Consequences
+
+**Positive:**
+1. **Concurrent access:** PostgreSQL MVCC eliminates all lock contention.
+2. **Simplified stack:** One database instead of DuckDB + Redis (two processes, two failure modes).
+3. **Idempotent writes:** `ON CONFLICT DO NOTHING` makes replay safe.
+4. **Async throughout:** aiokafka + SQLAlchemy async — no thread pool hacks.
+5. **Clean Architecture:** Domain/Infrastructure separation enables independent testing.
+
+**Trade-offs:**
+1. **Lost OLAP capabilities:** DuckDB's columnar engine was faster for analytical queries. PostgreSQL requires proper indexing.
+2. **Migration cost:** 6 test files deleted, all query functions rewritten.
+3. **No AI narrative:** Removed LLM-generated explanations (deemed non-essential for MVP).
+
+### Verification
+
+```
+✅ uvicorn starts cleanly (DDL bootstrap + graceful shutdown)
+✅ pytest 12/12 (test_config)
+✅ All module imports resolve
+✅ docker compose config valid
+✅ backfill_blocks inserts 144 blocks idempotently
+```
+
+### Related Files
+- [session.py](backend/src/infrastructure/database/session.py)
+- [models.py](backend/src/infrastructure/database/models.py)
+- [producer.py](backend/src/infrastructure/messaging/producer.py)
+- [state_consumer.py](backend/src/workers/state_consumer.py)
+- [queries.py](backend/src/api/queries.py)
+- [backfill_blocks.py](backend/scripts/backfill_blocks.py)
