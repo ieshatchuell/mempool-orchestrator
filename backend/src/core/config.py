@@ -4,28 +4,25 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     """
-    Manages application settings and environment variables validation.
-    
-    Attributes:
-        kafka_bootstrap_servers (str): Connection string for the Kafka broker.
-        mempool_topic (str): Target Kafka topic for mempool events.
-        mempool_ws_url (str): Source WebSocket URL for real-time mempool data.
-        mempool_api_url (str): Base URL for Mempool.space REST API.
+    Centralized application configuration via pydantic-settings.
+
+    All values are loaded from environment variables (or .env file).
+    Zero magic strings — every connection URL, topic name, and API endpoint
+    is configurable.
     """
+    # Kafka (Redpanda)
     kafka_bootstrap_servers: str = "localhost:9092"
     mempool_topic: str = "mempool-raw"
+
+    # Mempool.space external APIs
     mempool_ws_url: str = "wss://mempool.space/api/v1/ws"
     mempool_api_url: str = "https://mempool.space/api"
 
-    # Storage - DuckDB
-    duckdb_path: str = "../data/market/mempool_data.duckdb"
-    duckdb_batch_size: int = 50  # Messages before commit
+    # Storage — PostgreSQL (async via asyncpg)
+    postgres_dsn: str = "postgresql+asyncpg://mempool:mempool@localhost:5432/mempool"
 
-    # Agent History - Separate DB to avoid file lock conflicts
-    agent_history_path: str = "../data/history/agent_history.duckdb"
-
-    # Redis - CQRS read layer (dashboard projections)
-    redis_url: str = "redis://localhost:6379/0"
+    # Kafka consumer batch size
+    kafka_batch_size: int = 50
 
     model_config = SettingsConfigDict(
         env_file=".env", 
