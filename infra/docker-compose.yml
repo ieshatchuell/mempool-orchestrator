@@ -34,18 +34,16 @@ services:
       timeout: 3s
       retries: 5
 
-  orchestrator:
-    build:
-      context: ../backend
-      dockerfile: Dockerfile
-    container_name: orchestrator
-    depends_on:
-      - redpanda
-      - postgres
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: pgadmin
+    ports:
+      - "5050:80"
     environment:
-      - KAFKA_BOOTSTRAP_SERVERS=redpanda:9092
-      - POSTGRES_DSN=postgresql+asyncpg://mempool:mempool@postgres:5432/mempool
-    command: ["sleep", "infinity"]
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@mempool.local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+    depends_on:
+      - postgres
 
 volumes:
   postgres_data:

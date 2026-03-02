@@ -1543,3 +1543,143 @@ graph LR
 - [state_consumer.py](backend/src/workers/state_consumer.py)
 - [queries.py](backend/src/api/queries.py)
 - [backfill_blocks.py](backend/scripts/backfill_blocks.py)
+
+---
+
+## ADR-017: JSONB for Fee Arrays
+
+- **Date:** 2026-03-02
+- **Status:** ✅ IMPLEMENTED
+- **Phase:** Phase 6.5 — Governance & Infrastructure & UI Polish
+
+### Context
+
+The `fee_range` field from mempool.space contains a variable-length array of fee rates (typically 7 values: min, p10, p25, p50, p75, p90, max). This data needs to be stored in PostgreSQL for both `blocks` (confirmed blocks) and `mempool_block_projections` (projected blocks).
+
+**Options Evaluated:**
+
+| # | Type | Truncation Risk | Query Support | Complexity |
+|---|---|---|---|---|
+| A | `VARCHAR(256)` | ⚠️ High — dynamic arrays can exceed limit | ❌ String parsing | 🟢 Low |
+| B | Auxiliary table (normalized) | ✅ None | ✅ Full SQL | 🔴 High — extra JOINs |
+| **C** | **`JSONB`** | **✅ None** | **✅ Native JSON ops** | **🟢 Low** |
+
+### Decision
+
+Use PostgreSQL's native `JSONB` column type for `fee_range` on both `blocks` and `mempool_block_projections` tables.
+
+- SQLAlchemy mapping: `mapped_column(JSONB, nullable=True)`
+- Python lists pass directly to asyncpg — no manual `json.dumps()` needed.
+
+### Consequences
+
+- **Good:** No data truncation risk — JSONB stores up to 255 MB per value.
+- **Good:** Native PostgreSQL JSON functions (`jsonb_array_elements`, `->`, `->>`) available for future analytical queries.
+- **Good:** API layer receives Python `list` directly from ORM — zero deserialization code.
+- **Neutral:** Slightly larger storage footprint compared to a normalized table, but negligible at our volume.
+
+### Related Files
+- [models.py](backend/src/infrastructure/database/models.py) — `fee_range: Mapped[list | None] = mapped_column(JSONB)`
+- [01_add_pool_and_projections.sql](backend/scripts/01_add_pool_and_projections.sql) — `fee_range JSONB`
+- [queries.py](backend/src/api/queries.py) — `row.fee_range if row.fee_range else []`
+
+---
+
+## ADR-018: Snapshot Pattern for Mempool Projections
+
+- **Date:** 2026-03-02
+- **Status:** ✅ IMPLEMENTED
+- **Phase:** Phase 6.5 — Governance & Infrastructure & UI Polish
+
+### Context
+
+Mempool block projections (`mempool-blocks` WebSocket events) represent the miner's current view of pending transactions grouped into projected blocks. This data changes completely every few seconds — the entire projection set is replaced whenever the mempool state changes.
+
+**Options Evaluated:**
+
+| # | Strategy | Complexity | Consistency | Performance |
+|---|---|---|---|---|
+| A | UPSERT by `block_index` | 🟡 Medium — requires natural key management | ⚠️ Stale rows if block count decreases | 🟢 Fast |
+| **B** | **DELETE ALL + INSERT ALL (Snapshot)** | **🟢 Low** | **✅ Always consistent** | **🟢 Fast** |
+| C | Soft-delete with `active` flag | 🔴 High — requires garbage collection | ⚠️ Query complexity | 🟡 Medium |
+
+### Decision
+
+Use a **Snapshot** pattern: on each `mempool_block` Kafka event, DELETE all existing rows from `mempool_block_projections` and INSERT the new batch within a single transaction.
+
+```python
+async with async_session() as session:
+    await session.execute(delete(MempoolBlockProjection))  # Truncate
+    for idx, block in enumerate(validated):
+        session.add(MempoolBlockProjection(block_index=idx, ...))  # Insert
+    await session.commit()
+```
+
+The `block_index` field (0 = next block, 1 = second block, ...) preserves ordering from enumeration.
+
+### Consequences
+
+- **Good:** Table always reflects the exact current mempool state — no stale rows.
+- **Good:** Zero diffing logic — no need to compare old vs new projections.
+- **Good:** `COUNT(*)` on the table directly gives `blocks_to_clear` — no calculation needed.
+- **Trade-off:** DELETE + INSERT is slightly more expensive than UPSERT, but the table is small (typically 8–15 rows) and writes are infrequent (~every 10s).
+
+### Related Files
+- [state_consumer.py](backend/src/workers/state_consumer.py) — `_handle_mempool_block()`
+- [models.py](backend/src/infrastructure/database/models.py) — `MempoolBlockProjection` ORM
+- [queries.py](backend/src/api/queries.py) — `blocks_to_clear = COUNT(*) FROM mempool_block_projections`
+- [test_state_consumer.py](backend/tests/test_state_consumer.py) — Snapshot pattern tests
+
+---
+
+## ADR-019: Orchestrator Service Removal & Logic Migration
+
+- **Date:** 2026-03-02
+- **Status:** ✅ IMPLEMENTED
+- **Phase:** Phase 6.5 — Governance & Infrastructure & UI Polish
+
+### Context
+
+The `orchestrator` service was legacy code from the pre-EDA architecture (Phases 1–3). It originally hosted the AI decision engine (Ollama + PydanticAI) and deterministic strategy logic. After ADR-016 (EDA migration), the orchestrator was reduced to a Docker container running `sleep infinity` — consuming RAM and cluttering the architecture.
+
+However, the Dashboard's "Strategy & Trend" card depends on `/api/orchestrator/status` for market analytics (EMA, trend classification, PATIENT/RELIABLE strategy). Removing the endpoint would break the frontend.
+
+### Decision
+
+**Two-part refactoring:**
+
+1. **Delete the Docker container** — the `orchestrator` service, its Justfile recipe, and its Dockerfile reference are removed. This eliminates ~100 MB of wasted RAM.
+
+2. **Migrate market analytics to the API query layer** — the `query_orchestrator_status()` function and its EMA helpers (`_compute_ema_local`, `_classify_ema_trend_local`) are retained in `src/api/queries.py`. These are pure SQL/Python calculations that read from `blocks` and `mempool_snapshots` tables — no external service needed.
+
+**What was deleted:**
+
+| Component | File |
+|---|---|
+| Docker service | `infra/docker-compose.yml` — `orchestrator` service block |
+| Justfile recipe | `Justfile` — `orchestrator` recipe |
+
+**What was migrated (preserved):**
+
+| Component | File |
+|---|---|
+| API endpoint | `src/api/main.py` — `GET /api/orchestrator/status` |
+| Query function | `src/api/queries.py` — `query_orchestrator_status()` + EMA helpers |
+| Response schemas | `src/api/schemas.py` — `OrchestratorStatusResponse`, `StrategyResult` |
+
+### Consequences
+
+- **Good:** Reduced Docker resource usage (~100 MB RAM).
+- **Good:** Cleaner infrastructure — no "zombie" containers.
+- **Good:** Zero latency for updates — analytics computed on request, always fresh.
+- **Good:** Full frontend compatibility preserved — Dashboard renders Strategy & Trend card without changes.
+- **Good:** 47 tests pass — zero regressions.
+- **Neutral:** Strategy logic (EMA, PATIENT/RELIABLE) remains available for future reimplementation as a dedicated service if needed.
+
+### Related Files
+- [docker-compose.yml](infra/docker-compose.yml) — Container removed
+- [Justfile](Justfile) — Recipe removed
+- [queries.py](backend/src/api/queries.py) — `query_orchestrator_status()` (migrated, preserved)
+- [main.py](backend/src/api/main.py) — Endpoint preserved
+- [schemas.py](backend/src/api/schemas.py) — Response models preserved
+

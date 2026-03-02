@@ -8,7 +8,7 @@ strict type enforcement.
 import pytest
 from pydantic import ValidationError
 
-from src.schemas import MempoolStats, MempoolBlock, MempoolInfo
+from src.domain.schemas import MempoolStats, MempoolBlock, MempoolInfo
 
 
 class TestMempoolStats:

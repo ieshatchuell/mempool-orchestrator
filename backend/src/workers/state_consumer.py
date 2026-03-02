@@ -2,9 +2,9 @@
 
 Consumes from Redpanda topic (mempool-raw) under consumer group
 'mempool-state-writers' and persists state to PostgreSQL tables:
-  - stats         → MempoolSnapshot (INSERT, append-only timeseries)
+  - stats           → MempoolSnapshot (INSERT, append-only timeseries)
   - confirmed_block → BlockRecord (UPSERT, idempotent by height)
-  - mempool_block → debug log only (skipped for now)
+  - mempool_block   → MempoolBlockProjection (Snapshot: DELETE + INSERT)
 
 Usage:
     cd backend && uv run python -m src.workers.state_consumer
@@ -16,12 +16,18 @@ import json
 from aiokafka import AIOKafkaConsumer
 from loguru import logger
 from pydantic import ValidationError
+from sqlalchemy import delete
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from src.core.config import settings
 from src.infrastructure.database.session import engine, async_session
-from src.infrastructure.database.models import Base, BlockRecord, MempoolSnapshot
-from src.domain.schemas import MempoolStats, ConfirmedBlock
+from src.infrastructure.database.models import (
+    Base,
+    BlockRecord,
+    MempoolSnapshot,
+    MempoolBlockProjection,
+)
+from src.domain.schemas import MempoolStats, MempoolBlock, ConfirmedBlock
 
 
 async def _handle_stats(value: bytes) -> None:
@@ -46,8 +52,17 @@ async def _handle_stats(value: bytes) -> None:
 
 
 async def _handle_confirmed_block(value: bytes) -> None:
-    """Materialize a ConfirmedBlock event into a BlockRecord row (idempotent)."""
+    """Materialize a ConfirmedBlock event into a BlockRecord row (idempotent).
+
+    Extracts pool_name from extras.pool dict and fee_range from extras.
+    JSONB columns accept Python lists directly (asyncpg adapter handles it).
+    """
     block = ConfirmedBlock.model_validate_json(value)
+
+    # Extract pool name from nested dict
+    pool_name = None
+    if block.extras.pool and isinstance(block.extras.pool, dict):
+        pool_name = block.extras.pool.get("name")
 
     stmt = pg_insert(BlockRecord).values(
         height=block.height,
@@ -57,6 +72,8 @@ async def _handle_confirmed_block(value: bytes) -> None:
         size=block.size,
         median_fee=block.extras.median_fee,
         total_fees=block.extras.total_fees,
+        pool_name=pool_name,
+        fee_range=block.extras.fee_range if block.extras.fee_range else None,
     ).on_conflict_do_nothing(index_elements=["height"])
 
     async with async_session() as session:
@@ -66,8 +83,56 @@ async def _handle_confirmed_block(value: bytes) -> None:
     logger.info(
         f"BlockRecord: height={block.height}, "
         f"median_fee={block.extras.median_fee:.2f} sat/vB, "
+        f"pool={pool_name or 'unknown'}, "
         f"tx_count={block.tx_count}"
     )
+
+
+async def _handle_mempool_block(value: bytes) -> None:
+    """Materialize projected mempool blocks using Snapshot pattern.
+
+    Strategy: DELETE all existing projections, then INSERT the new batch.
+    This ensures the table always reflects the latest mempool state.
+    The block_index field preserves ordering (0 = next block).
+    """
+    raw_blocks = json.loads(value)
+
+    if not isinstance(raw_blocks, list):
+        logger.warning(f"Expected list for mempool_block, got {type(raw_blocks)}")
+        return
+
+    # Validate each block with Pydantic
+    validated: list[MempoolBlock] = []
+    for raw in raw_blocks:
+        try:
+            validated.append(MempoolBlock.model_validate(raw))
+        except ValidationError as e:
+            logger.error(f"MempoolBlock validation failed: {e}")
+            continue
+
+    if not validated:
+        return
+
+    async with async_session() as session:
+        # Truncate: remove all existing projections
+        await session.execute(delete(MempoolBlockProjection))
+
+        # Insert new snapshot with block_index from enumeration order
+        for idx, block in enumerate(validated):
+            projection = MempoolBlockProjection(
+                block_index=idx,
+                block_size=block.block_size,
+                block_v_size=block.block_v_size,
+                n_tx=block.n_tx,
+                total_fees=block.total_fees,
+                median_fee=block.median_fee,
+                fee_range=block.fee_range if block.fee_range else None,
+            )
+            session.add(projection)
+
+        await session.commit()
+
+    logger.info(f"MempoolBlockProjections: {len(validated)} blocks materialized")
 
 
 async def _handle_message(key: str | None, value: bytes) -> None:
@@ -77,7 +142,7 @@ async def _handle_message(key: str | None, value: bytes) -> None:
     elif key == "confirmed_block":
         await _handle_confirmed_block(value)
     elif key == "mempool_block":
-        logger.debug("mempool_block event received (skipped)")
+        await _handle_mempool_block(value)
     else:
         logger.warning(f"Unknown message key: {key}")
 

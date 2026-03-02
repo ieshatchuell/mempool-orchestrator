@@ -106,6 +106,6 @@ async def remove_from_watchlist(txid: str = FastAPIPath(..., min_length=64, max_
 
 @app.get("/api/orchestrator/status", response_model=OrchestratorStatusResponse)
 async def get_orchestrator_status():
-    """Market metrics: fees, EMA, traffic level, strategy stubs."""
+    """Market metrics: fees, EMA, traffic level, strategy data (pure SQL/Python)."""
     data = await query_orchestrator_status()
     return OrchestratorStatusResponse(**data)

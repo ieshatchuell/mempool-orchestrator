@@ -52,15 +52,26 @@ The project addresses the auction market for Bitcoin block space.
 - ~~**[API] Presentation Layer:** Async SQLAlchemy read-only queries.~~ ✅ Done
 - ~~**[Scripts] Backfill:** 144-block initial load from REST API.~~ ✅ Done
 
-### Phase 6.5: UI Polish (Camino A) — 🛠️ NEXT
-- **[DB] Add `pool_name`:** Add mining pool name column to `BlockRecord` ORM model.
-- **[Consumer] Process `mempool_block` events:** Materialize projected blocks to compute the real **Median Fee Rate** instead of using `mempool_min_fee` as proxy.
-- **[API] Enrich responses:** Populate `blocks_to_clear`, `fee_range`, and `pool_name` in API responses.
+### Phase 6.5: Governance, Infrastructure & UI Polish — ✅ COMPLETED (Session 6)
+- ~~**[Governance] Git Workflow:** Branching rule enforced in agent persona.~~ ✅ Done
+- ~~**[Infra] pgAdmin:** Database viewer service with env var interpolation.~~ ✅ Done
+- ~~**[DB] Schema Enrichment:** `pool_name` (VARCHAR) + `fee_range` (JSONB) on blocks. New `mempool_block_projections` table.~~ ✅ Done
+- ~~**[Consumer] Snapshot Pattern:** `mempool_block` events materialized via DELETE + INSERT.~~ ✅ Done
+- ~~**[API] Enrich Responses:** Real `pool_name`, `fee_range`, `blocks_to_clear`.~~ ✅ Done
+- ~~**[QA] Test Suite:** 47 tests (all green). Legacy tests fixed.~~ ✅ Done
+- ~~**[Cleanup] Logic Migration:** Orchestrator Docker container removed. Market analytics (EMA, Trend, Strategy) migrated to inline `query_orchestrator_status()` in API layer.~~ ✅ Done
+- ~~**[Docs] Full Update:** README, architecture.md, strategy.md updated.~~ ✅ Done
 
 ### Phase 7: The Brain (Camino B) — 🧠 PLANNED
 - **[Worker] Reconnect `tx_hunter.py`:** Rewrite to consume from Kafka and populate the `advisories` table with RBF/CPFP recommendations.
 - **[API] Wire Advisory Endpoints:** Connect watchlist GET/POST/DELETE to PostgreSQL.
 - **[Feature] Automated Showcase:** Autonomous curation of "interesting" transactions.
+
+### Session 7: Frontend Polish & Visualization — 🎨 NEXT
+- **[UI] Fee Histograms:** Detailed fee distribution visualizations using `fee_range` data.
+- **[UI] Block Weight Charts:** Graphical weight/size breakdown per block.
+- **[UI] Connection Stability:** Ensure WebSocket reconnection in the Next.js client.
+- **[UI] Polish:** Responsive design, micro-animations, typography refinement.
 
 ### Phase 8: True Sovereignty — 🦁 Q4 2026 (Endgame)
 - **[Infra]** Deploy Bitcoin Core Node (Pruned Mode, `prune=550`) in Docker.
@@ -69,4 +80,4 @@ The project addresses the auction market for Bitcoin block space.
 
 ---
 **Lead Engineer:** Israel (@ieshatchuell)
-**Status:** Phase 5 (EDA Migration) COMPLETED ✅. Phase 6.5 (UI Polish) and Phase 7 (The Brain) next.
+**Status:** Phase 6.5 (Governance & Infrastructure & UI Polish) COMPLETED ✅. Session 7 (Frontend Polish) and Phase 7 (The Brain) next.

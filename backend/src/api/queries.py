@@ -10,7 +10,7 @@ from datetime import datetime, timezone, timedelta
 from sqlalchemy import select, func, desc
 
 from src.infrastructure.database.session import async_session
-from src.infrastructure.database.models import BlockRecord, MempoolSnapshot
+from src.infrastructure.database.models import BlockRecord, MempoolSnapshot, MempoolBlockProjection
 
 
 # =============================================================================
@@ -70,12 +70,18 @@ async def query_mempool_stats() -> dict:
             if old.total_bytes > 0:
                 delta_blocks_pct = round(((latest.total_bytes - old.total_bytes) / old.total_bytes) * 100, 1)
 
+        # Blocks to clear: count of projected mempool blocks
+        blocks_to_clear_result = await session.execute(
+            select(func.count()).select_from(MempoolBlockProjection)
+        )
+        blocks_to_clear = blocks_to_clear_result.scalar() or 0
+
         return {
             "mempool_size": latest.tx_count,
             "mempool_bytes": latest.total_bytes,
             "total_fee_sats": latest.total_fee_sats,
             "median_fee": latest.median_fee,
-            "blocks_to_clear": 0,  # Requires mempool-blocks processing (deferred)
+            "blocks_to_clear": blocks_to_clear,
             "delta_size_pct": delta_size_pct,
             "delta_fee_pct": delta_fee_pct,
             "delta_total_fee_pct": delta_total_fee_pct,
@@ -116,8 +122,8 @@ async def query_recent_blocks(limit: int = 10) -> dict:
                 "size_bytes": row.size,
                 "median_fee": row.median_fee,
                 "total_fees_sats": row.total_fees,
-                "fee_range": [],  # Not stored in current BlockRecord schema
-                "pool_name": None,  # Not stored in current BlockRecord schema
+                "fee_range": row.fee_range if row.fee_range else [],
+                "pool_name": row.pool_name,
             })
 
         return {
@@ -127,14 +133,28 @@ async def query_recent_blocks(limit: int = 10) -> dict:
 
 
 # =============================================================================
-# ORCHESTRATOR STATUS (Market Metrics)
+# WATCHLIST (Stub — deferred to advisory phase)
+# =============================================================================
+
+async def query_watchlist_advisories() -> dict:
+    """Query watchlist advisories from PostgreSQL.
+
+    Returns:
+        Dict matching WatchlistResponse fields.
+    """
+    # Stub — advisory pipeline not yet wired
+    return {"advisories": [], "stuck_count": 0, "total_count": 0}
+
+
+# =============================================================================
+# ORCHESTRATOR STATUS (Market Metrics — pure SQL/Python, no external service)
 # =============================================================================
 
 async def query_orchestrator_status() -> dict:
     """Build market status from PostgreSQL data.
 
     Calculates EMA, trend, traffic level from stored blocks and snapshots.
-    Strategy evaluation (PATIENT/RELIABLE) deferred to future phase.
+    Serves the Dashboard's Strategy & Trend card.
 
     Returns:
         Dict matching OrchestratorStatusResponse fields.
@@ -213,20 +233,6 @@ async def query_orchestrator_status() -> dict:
 
 
 # =============================================================================
-# WATCHLIST (Stub — deferred to advisory phase)
-# =============================================================================
-
-async def query_watchlist_advisories() -> dict:
-    """Query watchlist advisories from PostgreSQL.
-
-    Returns:
-        Dict matching WatchlistResponse fields.
-    """
-    # Stub — advisory pipeline not yet wired
-    return {"advisories": [], "stuck_count": 0, "total_count": 0}
-
-
-# =============================================================================
 # EMA helpers (pure math — no DB dependency)
 # =============================================================================
 
@@ -260,3 +266,4 @@ def _classify_ema_trend_local(
     elif change_pct < -threshold:
         return "FALLING"
     return "STABLE"
+

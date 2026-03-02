@@ -1,26 +1,29 @@
 """Unit tests for WebSocket ingestor routing logic.
 
 Tests verify the route_message function correctly routes different event types
-to Kafka with proper validation using mocked producers.
+to Kafka with proper validation using mocked async producers.
 
-Note: route_message is async (Signal & Fetch pattern for confirmed blocks),
-so all test methods use asyncio.run() to execute the coroutine.
+Updated for Phase 5 EDA: imports from src.workers.ingestor,
+producer uses async .send() instead of sync .produce().
 """
 
 import asyncio
+import json
 from unittest.mock import MagicMock, AsyncMock, patch
+
 import pytest
 
-from src.ingestors.mempool_ws import route_message
+from src.workers.ingestor import route_message
 
 
 class TestRouteMessage:
-    """Test suite for message routing logic with mocked Kafka producer."""
+    """Test suite for message routing logic with mocked async Kafka producer."""
 
-    def test_route_stats(self):
+    @pytest.mark.asyncio
+    async def test_route_stats(self):
         """Verify stats events are routed with key='stats'."""
-        mock_producer = MagicMock()
-        
+        mock_producer = AsyncMock()
+
         data = {
             "mempoolInfo": {
                 "size": 150000,
@@ -31,18 +34,19 @@ class TestRouteMessage:
                 "minRelayTxFee": 0.00001
             }
         }
-        
-        asyncio.run(route_message(data, mock_producer))
-        
-        assert mock_producer.produce.call_count == 1
-        call_kwargs = mock_producer.produce.call_args.kwargs
+
+        await route_message(data, mock_producer)
+
+        assert mock_producer.send.call_count == 1
+        call_kwargs = mock_producer.send.call_args.kwargs
         assert call_kwargs["key"] == "stats"
         assert "value" in call_kwargs
 
-    def test_route_blocks(self):
+    @pytest.mark.asyncio
+    async def test_route_blocks(self):
         """Verify mempool-blocks events are routed with key='mempool_block'."""
-        mock_producer = MagicMock()
-        
+        mock_producer = AsyncMock()
+
         data = {
             "mempool-blocks": [
                 {
@@ -63,18 +67,19 @@ class TestRouteMessage:
                 }
             ]
         }
-        
-        asyncio.run(route_message(data, mock_producer))
-        
-        assert mock_producer.produce.call_count == 1
-        call_kwargs = mock_producer.produce.call_args.kwargs
+
+        await route_message(data, mock_producer)
+
+        assert mock_producer.send.call_count == 1
+        call_kwargs = mock_producer.send.call_args.kwargs
         assert call_kwargs["key"] == "mempool_block"
         assert "value" in call_kwargs
 
-    def test_ignore_conversions(self):
+    @pytest.mark.asyncio
+    async def test_ignore_conversions(self):
         """Verify conversions messages are silently ignored (no Kafka produce)."""
-        mock_producer = MagicMock()
-        
+        mock_producer = AsyncMock()
+
         data = {
             "conversions": {
                 "USD": 95000.50,
@@ -82,18 +87,19 @@ class TestRouteMessage:
                 "GBP": 75000.00
             }
         }
-        
-        asyncio.run(route_message(data, mock_producer))
-        
-        mock_producer.produce.assert_not_called()
 
-    @patch("src.ingestors.mempool_ws.fetch_confirmed_block")
-    def test_route_confirmed_block(self, mock_fetch):
+        await route_message(data, mock_producer)
+
+        mock_producer.send.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("src.workers.ingestor.fetch_confirmed_block")
+    async def test_route_confirmed_block(self, mock_fetch):
         """Verify confirmed block signals trigger Signal & Fetch and produce to Kafka."""
-        mock_producer = MagicMock()
-        
+        mock_producer = AsyncMock()
+
         # Mock the REST API fetch to return a valid ConfirmedBlock
-        from src.schemas import ConfirmedBlock, ConfirmedBlockExtras
+        from src.domain.schemas import ConfirmedBlock, ConfirmedBlockExtras
         mock_block = ConfirmedBlock(
             id="00000000000000000001abcdef",
             height=800000,
@@ -109,7 +115,7 @@ class TestRouteMessage:
             )
         )
         mock_fetch.return_value = mock_block
-        
+
         data = {
             "block": {
                 "id": "00000000000000000001abcdef",
@@ -120,23 +126,24 @@ class TestRouteMessage:
                 "weight": 4000000
             }
         }
-        
-        asyncio.run(route_message(data, mock_producer))
-        
+
+        await route_message(data, mock_producer)
+
         # Assert fetch was called with the block hash
         mock_fetch.assert_called_once_with("00000000000000000001abcdef")
-        
-        # Assert producer.produce was called with confirmed_block key
-        assert mock_producer.produce.call_count == 1
-        call_kwargs = mock_producer.produce.call_args.kwargs
+
+        # Assert producer.send was called with confirmed_block key
+        assert mock_producer.send.call_count == 1
+        call_kwargs = mock_producer.send.call_args.kwargs
         assert call_kwargs["key"] == "confirmed_block"
 
-    @patch("src.ingestors.mempool_ws.fetch_confirmed_block")
-    def test_confirmed_block_fetch_failure(self, mock_fetch):
+    @pytest.mark.asyncio
+    @patch("src.workers.ingestor.fetch_confirmed_block")
+    async def test_confirmed_block_fetch_failure(self, mock_fetch):
         """Verify that if REST fetch fails, no message is produced."""
-        mock_producer = MagicMock()
+        mock_producer = AsyncMock()
         mock_fetch.return_value = None  # Fetch failed
-        
+
         data = {
             "block": {
                 "id": "00000000000000000001234567890abcdef",
@@ -147,16 +154,17 @@ class TestRouteMessage:
                 "weight": 4000000
             }
         }
-        
-        asyncio.run(route_message(data, mock_producer))
-        
-        mock_fetch.assert_called_once()
-        mock_producer.produce.assert_not_called()
 
-    def test_validation_error_invalid_stats(self):
+        await route_message(data, mock_producer)
+
+        mock_fetch.assert_called_once()
+        mock_producer.send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_validation_error_invalid_stats(self):
         """Verify validation errors don't produce to Kafka."""
-        mock_producer = MagicMock()
-        
+        mock_producer = AsyncMock()
+
         data = {
             "mempoolInfo": {
                 "size": "invalid_string",  # Invalid type
@@ -164,15 +172,16 @@ class TestRouteMessage:
                 "totalFee": 1.5
             }
         }
-        
-        asyncio.run(route_message(data, mock_producer))
-        
-        mock_producer.produce.assert_not_called()
 
-    def test_validation_error_invalid_block(self):
+        await route_message(data, mock_producer)
+
+        mock_producer.send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_validation_error_invalid_block(self):
         """Verify invalid block data doesn't produce to Kafka."""
-        mock_producer = MagicMock()
-        
+        mock_producer = AsyncMock()
+
         data = {
             "mempool-blocks": [
                 {
@@ -185,15 +194,16 @@ class TestRouteMessage:
                 }
             ]
         }
-        
-        asyncio.run(route_message(data, mock_producer))
-        
-        mock_producer.produce.assert_not_called()
 
-    def test_partial_block_validation(self):
+        await route_message(data, mock_producer)
+
+        mock_producer.send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_partial_block_validation(self):
         """Verify that valid blocks are produced even if some blocks fail validation."""
-        mock_producer = MagicMock()
-        
+        mock_producer = AsyncMock()
+
         data = {
             "mempool-blocks": [
                 # Valid block
@@ -216,23 +226,24 @@ class TestRouteMessage:
                 }
             ]
         }
-        
-        asyncio.run(route_message(data, mock_producer))
-        
-        assert mock_producer.produce.call_count == 1
-        call_kwargs = mock_producer.produce.call_args.kwargs
+
+        await route_message(data, mock_producer)
+
+        assert mock_producer.send.call_count == 1
+        call_kwargs = mock_producer.send.call_args.kwargs
         assert call_kwargs["key"] == "mempool_block"
 
-    def test_unknown_message_type(self):
+    @pytest.mark.asyncio
+    async def test_unknown_message_type(self):
         """Verify unknown message types are ignored."""
-        mock_producer = MagicMock()
-        
+        mock_producer = AsyncMock()
+
         data = {
             "unknown_key": {
                 "some": "data"
             }
         }
-        
-        asyncio.run(route_message(data, mock_producer))
-        
-        mock_producer.produce.assert_not_called()
+
+        await route_message(data, mock_producer)
+
+        mock_producer.send.assert_not_called()

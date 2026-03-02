@@ -89,6 +89,8 @@ async def backfill() -> None:
                 "size": b.size,
                 "median_fee": b.extras.median_fee,
                 "total_fees": b.extras.total_fees,
+                "pool_name": b.extras.pool.get("name") if b.extras.pool else None,
+                "fee_range": b.extras.fee_range if b.extras.fee_range else None,
             }
             for b in all_blocks
         ]

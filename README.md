@@ -1,6 +1,6 @@
 # Mempool Orchestrator
 
-An event-driven data platform that ingests, processes, and optimizes Bitcoin mempool dynamics for automated treasury management.
+An event-driven data platform that ingests, processes, and visualizes Bitcoin mempool dynamics for fee optimization and treasury management.
 
 ## Tech Stack
 
@@ -30,26 +30,9 @@ mempool.space WS ──→ Ingestor ──→ Redpanda ──→ State Consumer 
 | **Infrastructure** | `src/infrastructure/database/` | SQLAlchemy 2.0 async engine + ORM models |
 | **Infrastructure** | `src/infrastructure/messaging/` | aiokafka producer with lifecycle management |
 | **Workers** | `src/workers/ingestor.py` | WebSocket → Kafka (Signal & Fetch pattern) |
-| **Workers** | `src/workers/state_consumer.py` | Kafka → PostgreSQL (idempotent materialization) |
+| **Workers** | `src/workers/state_consumer.py` | Kafka → PostgreSQL (idempotent materialization + Snapshot pattern) |
 | **API** | `src/api/` | Read-only FastAPI endpoints |
 | **Core** | `src/core/config.py` | Centralized config via `pydantic-settings` |
-
-### Decision Rules (Deterministic)
-
-The orchestrator supports two strategy modes:
-
-**🐢 PATIENT** (default) — Treasury operations, saves ~27.7%:
-```python
-IF fee_premium_pct > 20%:
-    action = WAIT         # Target: Historical Median Fee
-ELSE:
-    action = BROADCAST    # Target: Current Median Fee
-```
-
-**⚡ RELIABLE** — Time-sensitive operations, 94% hit rate:
-```python
-action = BROADCAST        # Always, with EMA-20 smoothed fee
-```
 
 ## Quick Start
 
@@ -59,13 +42,9 @@ action = BROADCAST        # Always, with EMA-20 smoothed fee
 - **Just** (Command Runner)
 
 ### Configuration
-Create a `.env` file in the project root:
+Copy `.env.example` to `.env` and adjust values:
 ```bash
-KAFKA_BOOTSTRAP_SERVERS=localhost:9092
-MEMPOOL_TOPIC=mempool-raw
-MEMPOOL_WS_URL=wss://mempool.space/api/v1/ws
-MEMPOOL_API_URL=https://mempool.space/api
-POSTGRES_DSN=postgresql+asyncpg://mempool:mempool@localhost:5432/mempool
+cp .env.example .env
 ```
 
 ### Project Structure
@@ -79,47 +58,39 @@ POSTGRES_DSN=postgresql+asyncpg://mempool:mempool@localhost:5432/mempool
 │   │   │   ├── database/     # SQLAlchemy async engine + ORM models
 │   │   │   └── messaging/    # aiokafka producer
 │   │   └── workers/          # Async workers (ingestor, state_consumer)
-│   ├── scripts/              # Maintenance (backfill_blocks.py)
+│   ├── scripts/              # Maintenance (backfill, migrations)
 │   └── tests/
 ├── frontend/                 # Next.js + shadcn/ui dashboard
-├── infra/                    # Docker Compose (Redpanda, PostgreSQL)
+├── infra/                    # Docker Compose (Redpanda, PostgreSQL, pgAdmin)
 └── docs/                     # ADRs, architecture, roadmap
 ```
 
 ### Installation
 ```bash
-# Sync all dependencies
 just sync
-
-# Or sync individually
-cd backend && uv sync
 ```
 
 ### Commands
 ```bash
-# 1. Start Infrastructure (Redpanda + PostgreSQL)
-just infra-up
+# Infrastructure
+just infra-up         # Start Redpanda + PostgreSQL + pgAdmin
+just infra-down       # Stop all services
+just infra-status     # View running containers
+just db-viewer        # Open pgAdmin in browser (port 5050)
 
-# 2. System Health Check
-just check
+# Data Pipeline
+just backfill         # Backfill last 144 blocks (~24h)
+just radar            # Launch Ingestor (WS → Kafka)
+just state-writer     # Launch State Consumer (Kafka → PostgreSQL)
 
-# 3. Backfill last 144 blocks (~24h) from mempool.space
-just backfill
+# API & Frontend
+just api              # Start FastAPI server (port 8000)
+just dashboard        # Launch Next.js dashboard (port 3000)
 
-# 4. Launch Ingestion Pipeline (WS → Kafka)
-just radar
-
-# 5. Launch State Consumer (Kafka → PostgreSQL)
-just state-writer
-
-# 6. Launch API Server (reads from PostgreSQL)
-just api
-
-# 7. Launch Next.js Dashboard
-just dashboard
-
-# 8. Stop Infrastructure
-just infra-down
+# Maintenance
+just test             # Run backend test suite
+just check            # System health check
+just sync             # Sync backend dependencies
 ```
 
 ## Data Models (PostgreSQL)
@@ -134,6 +105,8 @@ just infra-down
 | `size` | INTEGER | Block size (bytes) |
 | `median_fee` | FLOAT | Median fee rate (sat/vB) |
 | `total_fees` | BIGINT | Total fees (satoshis) |
+| `pool_name` | VARCHAR(64) | Mining pool name |
+| `fee_range` | JSONB | Fee rate distribution array |
 
 **`mempool_snapshots` table** (point-in-time mempool state)
 | Column | Type | Description |
@@ -145,33 +118,42 @@ just infra-down
 | `total_fee_sats` | BIGINT | Total fees (satoshis) |
 | `median_fee` | FLOAT | Fee floor proxy |
 
-**`advisories` table** (RBF/CPFP recommendations)
+**`mempool_block_projections` table** (projected blocks — Snapshot pattern)
 | Column | Type | Description |
 |---|---|---|
 | `id` | INTEGER (PK) | Auto-increment |
-| `txid` | VARCHAR(64) | Transaction ID (indexed) |
-| `action` | VARCHAR(16) | BUMP / WAIT / CONFIRMED |
-| `current_fee_rate` | FLOAT | Current fee rate |
-| `target_fee_rate` | FLOAT | Recommended fee rate |
+| `captured_at` | TIMESTAMPTZ | Server timestamp |
+| `block_index` | INTEGER | 0 = next block |
+| `block_size` | INTEGER | Projected block size (bytes) |
+| `block_v_size` | FLOAT | Virtual size |
+| `n_tx` | INTEGER | Transaction count |
+| `total_fees` | BIGINT | Total fees (satoshis) |
+| `median_fee` | FLOAT | Median fee rate (sat/vB) |
+| `fee_range` | JSONB | Fee rate distribution array |
 
 > **Convention:** All monetary values stored as integers in **Satoshis** to prevent floating-point precision errors.
+
+## API Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/mempool/stats` | Mempool KPIs: size, fees, blocks_to_clear, 1h deltas |
+| `GET` | `/api/blocks/recent` | Confirmed blocks with pool_name and fee_range |
+| `GET` | `/api/orchestrator/status` | Market analytics: EMA, trend, strategy (inline SQL/Python) |
+| `GET` | `/api/watchlist` | Tracked transactions (stub — Phase 7) |
 
 ## Testing
 
 ```bash
-# Run all tests
-just test
-
-# Run specific test suite
-cd backend && uv run pytest tests/test_config.py -v
+just test    # 47 tests
 ```
 
 **Test Coverage:**
 - `tests/test_config.py`: Environment variable validation (12 tests)
 - `tests/test_schemas.py`: Pydantic V2 contract validation
 - `tests/test_ingestor.py`: WebSocket routing logic
-- `tests/test_kafka_producer.py`: Kafka wrapper behavior
-- `tests/test_api.py`: REST API client (httpx + respx mocking)
+- `tests/test_kafka_producer.py`: Async producer wrapper
+- `tests/test_state_consumer.py`: ORM models + Snapshot pattern
 
 ## Documentation
 
@@ -181,17 +163,8 @@ cd backend && uv run pytest tests/test_config.py -v
 
 ## Development Workflow
 
-This project follows a "Just-driven" workflow. All commands are defined in the `Justfile`:
-
 ```bash
 just --list  # Show all available commands
 ```
 
-Key recipes:
-- `just check` — System health verification
-- `just test` — Run test suite
-- `just radar` — Start WebSocket ingestor
-- `just state-writer` — Start Kafka → PostgreSQL consumer
-- `just backfill` — Populate last 24h of blocks
-- `just api` — Start FastAPI server
-- `just dashboard` — Launch Next.js UI
+**Lead Engineer:** Israel (@ieshatchuell)

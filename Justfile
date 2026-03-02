@@ -61,11 +61,6 @@ state-writer:
     @echo "{{green}}📦 Starting State Consumer (Kafka → PostgreSQL)...{{reset}}"
     cd backend && uv run python -m src.workers.state_consumer
 
-# Run orchestrator locally (for development — pending Phase 6)
-orchestrator:
-    @echo "{{green}}🧠 Running Orchestrator locally...{{reset}}"
-    cd backend && uv run python -m src.workers.orchestrator
-
 # Backfill last 144 blocks (~24h) from mempool.space REST API
 backfill:
     @echo "{{green}}📥 Backfilling last 144 blocks (24h)...{{reset}}"
@@ -121,3 +116,12 @@ sync:
     @echo "{{green}}📦 Syncing Backend dependencies...{{reset}}"
     cd backend && uv sync
     @echo "{{green}}✅ Backend dependencies synced.{{reset}}"
+
+# Open pgAdmin database viewer (PostgreSQL GUI)
+db-viewer:
+    @echo "{{green}}🗄️  pgAdmin Database Viewer{{reset}}"
+    @echo "──────────────────────────────────────"
+    @echo "pgAdmin URL:  http://localhost:5050"
+    @echo "Credentials:  see .env (PGADMIN_* and POSTGRES_*)"
+    @echo "──────────────────────────────────────"
+    @open http://localhost:5050

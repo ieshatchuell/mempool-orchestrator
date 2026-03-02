@@ -61,3 +61,8 @@ For any complex or architectural request, you MUST explicitly output this struct
   - `docs/decisions.md` — Append a new ADR if an architectural decision was made.
   - `docs/strategy.md` — Update roadmap status and next steps.
 - **No Documentation Debt:** Never defer docs unless explicitly instructed by the user.
+
+## 8. Git Workflow (Unbreakable Rule)
+- **NEVER** commit directly to `main` or `master`. ALWAYS create and checkout a feature branch (e.g., `feature/xyz`) before writing code.
+- If currently on `main`, **stop and branch immediately**.
+- Branch naming: `feature/<phase-or-scope>` (e.g., `feature/phase-6-5-ui-polish`).

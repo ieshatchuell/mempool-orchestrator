@@ -118,16 +118,18 @@ flowchart LR
 
     ROUTE -->|"stats"| S["MempoolStats<br/>.model_validate_json()"]
     ROUTE -->|"confirmed_block"| B["ConfirmedBlock<br/>.model_validate_json()"]
-    ROUTE -->|"mempool_block"| SKIP["logger.debug()<br/><i>Skip (Phase 6.5)</i>"]
+    ROUTE -->|"mempool_block"| MB["MempoolBlock[]<br/>JSON → Validate"]
 
     S --> INSERT["INSERT<br/>mempool_snapshots<br/><i>append-only</i>"]
-    B --> UPSERT["INSERT ... ON CONFLICT<br/>DO NOTHING<br/>blocks<br/><i>idempotent by height</i>"]
+    B --> UPSERT["INSERT ... ON CONFLICT<br/>DO NOTHING<br/>blocks<br/><i>idempotent + pool_name + fee_range</i>"]
+    MB --> SNAP["Snapshot Pattern<br/>DELETE + INSERT<br/>mempool_block_projections"]
 
     INSERT --> PG["PostgreSQL"]
     UPSERT --> PG
+    SNAP --> PG
 ```
 
-### 3.3 API Layer (Read-Only Presentation)
+### 3.3 API Layer (Read-Only Presentation + Inline Analytics)
 
 ```mermaid
 flowchart LR
@@ -135,12 +137,12 @@ flowchart LR
 
     API --> Q1["/api/mempool/stats"]
     API --> Q2["/api/blocks/recent"]
-    API --> Q3["/api/orchestrator/status"]
+    API --> Q3["/api/orchestrator/status<br/><i>EMA + Trend (inline)</i>"]
     API --> Q4["/api/watchlist"]
 
     Q1 -->|"SELECT"| PG["PostgreSQL"]
     Q2 -->|"SELECT"| PG
-    Q3 -->|"SELECT"| PG
+    Q3 -->|"SELECT + EMA calc"| PG
     Q4 -->|"Stub"| STUB["Empty State<br/><i>Phase 7</i>"]
 ```
 
@@ -154,7 +156,7 @@ Pure Pydantic V2 contracts. Zero imports from databases, Kafka, or frameworks.
 |---|---|---|
 | `MempoolStats` | Mempool state from WS | `mempool_info.size`, `.bytes`, `.total_fee` |
 | `MempoolBlock` | Projected block template | `block_size`, `median_fee`, `fee_range` |
-| `ConfirmedBlock` | Mined block (Signal & Fetch) | `height`, `id`, `tx_count`, `extras.median_fee` |
+| `ConfirmedBlock` | Mined block (Signal & Fetch) | `height`, `id`, `tx_count`, `extras.median_fee`, `extras.pool`, `extras.fee_range` |
 | `FeeAdvisory` | RBF/CPFP recommendation | `txid`, `action`, `rbf_fee_sats`, `cpfp_fee_sats` |
 
 **Conventions:**
@@ -167,7 +169,7 @@ Pure Pydantic V2 contracts. Zero imports from databases, Kafka, or frameworks.
 | File | Purpose |
 |---|---|
 | `session.py` | Async SQLAlchemy engine (`asyncpg`, pool_size=5, max_overflow=10) |
-| `models.py` | ORM models: `BlockRecord`, `MempoolSnapshot`, `AdvisoryRecord` |
+| `models.py` | ORM models: `BlockRecord`, `MempoolSnapshot`, `MempoolBlockProjection`, `AdvisoryRecord` |
 
 **PostgreSQL Tables:**
 
@@ -181,6 +183,8 @@ erDiagram
         int size
         float median_fee
         bigint total_fees
+        varchar pool_name "Mining pool name"
+        jsonb fee_range "Fee rate distribution"
     }
 
     mempool_snapshots {
@@ -190,6 +194,18 @@ erDiagram
         bigint total_bytes
         bigint total_fee_sats
         float median_fee
+    }
+
+    mempool_block_projections {
+        int id PK
+        timestamptz captured_at
+        int block_index "0 = next block"
+        int block_size
+        float block_v_size "ADR-003"
+        int n_tx
+        bigint total_fees
+        float median_fee
+        jsonb fee_range
     }
 
     advisories {
@@ -215,7 +231,7 @@ erDiagram
 | Worker | Role | Input → Output |
 |---|---|---|
 | `ingestor.py` | Radar | WebSocket → Kafka |
-| `state_consumer.py` | Materializer | Kafka → PostgreSQL |
+| `state_consumer.py` | Materializer | Kafka → PostgreSQL (stats, blocks, projections) |
 | `tx_hunter.py` | Advisory Engine | Kafka → advisories table *(Phase 7)* |
 
 ### E. API Layer (`src/api/`)
@@ -231,13 +247,6 @@ erDiagram
 | File | Purpose |
 |---|---|
 | `config.py` | `pydantic-settings` singleton. All env vars centralized. |
-
-**Configuration Fields:**
-- `kafka_bootstrap_servers` — Redpanda connection
-- `mempool_topic` — Kafka topic name
-- `mempool_ws_url` — WebSocket endpoint
-- `mempool_api_url` — REST API base URL
-- `postgres_dsn` — SQLAlchemy async connection string
 
 ### G. Frontend Data Layer (TanStack Query v5)
 
@@ -271,8 +280,7 @@ graph TB
     subgraph "Docker Network"
         RP["Redpanda<br/>:9092 (Kafka)<br/>:8080 (Console)"]
         PG["PostgreSQL 16<br/>:5432<br/><i>mempool DB</i>"]
-        ORCH["Orchestrator<br/><i>sleep infinity</i><br/>(pending Phase 7)"]
-        DASH["Next.js<br/>:3000"]
+        PGA["pgAdmin<br/>:5050<br/><i>DB Viewer</i>"]
     end
 
     subgraph "Host Machine (Local)"
@@ -285,7 +293,7 @@ graph TB
     RP -->|consume| SC
     SC -->|write| PG
     PG -->|read| API
-    API -->|JSON| DASH
+    PGA -->|"browse"| PG
 ```
 
 ## 6. Project Structure
@@ -304,7 +312,7 @@ backend/
 │   ├── infrastructure/         # Infrastructure Layer
 │   │   ├── database/
 │   │   │   ├── session.py      # Async engine + session factory
-│   │   │   └── models.py       # ORM models (BlockRecord, etc.)
+│   │   │   └── models.py       # ORM models
 │   │   └── messaging/
 │   │       └── producer.py     # aiokafka async producer
 │   └── workers/                # Application Layer
@@ -312,13 +320,14 @@ backend/
 │       ├── state_consumer.py   # Kafka → PostgreSQL
 │       └── tx_hunter.py        # RBF/CPFP (Phase 7)
 ├── scripts/
-│   └── backfill_blocks.py      # Maintenance: 144-block initial load
+│   ├── backfill_blocks.py      # Maintenance: 144-block initial load
+│   └── 01_add_pool_and_projections.sql  # Manual migration
 └── tests/
     ├── test_config.py          # 12 tests
     ├── test_schemas.py         # Contract validation
     ├── test_ingestor.py        # Routing logic
-    ├── test_kafka_producer.py  # Producer wrapper
-    └── test_api.py             # REST client
+    ├── test_kafka_producer.py  # Async producer wrapper
+    └── test_state_consumer.py  # ORM models + Snapshot pattern (8 tests)
 ```
 
 ## 7. Architectural Patterns
@@ -339,6 +348,7 @@ backend/
 ### Idempotent Writes
 - `BlockRecord`: `INSERT ... ON CONFLICT (height) DO NOTHING`
 - `MempoolSnapshot`: Append-only (auto-increment PK)
+- `MempoolBlockProjection`: Snapshot pattern (DELETE + INSERT on each event)
 - Safe for Kafka consumer replay and backfill re-runs
 
 ### Data Validation at Boundary
