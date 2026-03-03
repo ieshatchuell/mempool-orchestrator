@@ -67,11 +67,19 @@ The project addresses the auction market for Bitcoin block space.
 - **[API] Wire Advisory Endpoints:** Connect watchlist GET/POST/DELETE to PostgreSQL.
 - **[Feature] Automated Showcase:** Autonomous curation of "interesting" transactions.
 
-### Session 7: Frontend Polish & Visualization — 🎨 NEXT
-- **[UI] Fee Histograms:** Detailed fee distribution visualizations using `fee_range` data.
-- **[UI] Block Weight Charts:** Graphical weight/size breakdown per block.
-- **[UI] Connection Stability:** Ensure WebSocket reconnection in the Next.js client.
-- **[UI] Polish:** Responsive design, micro-animations, typography refinement.
+### Session 7: Frontend Polish & Visualization — ✅ COMPLETED (ADR-020)
+- ~~**[UI] Fee Histograms:** Recharts bar chart for 7-band `fee_range` distribution.~~ ✅ Done
+- ~~**[UI] Block Weight Chart:** Horizontal fullness bars with pool badges and color-coded capacity.~~ ✅ Done
+- ~~**[UI] Table Micro-Viz:** Inline fee range gradient bar + colored pool name badges.~~ ✅ Done
+- ~~**[UI] CSS Animations:** `fade-in-up` keyframes, stagger delays (60ms), `hover-lift` on cards.~~ ✅ Done
+- ~~**[Docs] Architecture Diagram:** Rewrote Mermaid diagram — strict `graph TD`, color-coded layers, no spaghetti.~~ ✅ Done
+- ~~**[QA] Type Safety Audit:** `types.ts` ↔ `schemas.py` — all 4 endpoints verified in sync.~~ ✅ Done
+
+### Session 8: The Brain & Logic Hardening — 🧠 NEXT
+- **[Logic] Confidence Calculation:** Replace hardcoded confidence values (0.5/0.8) in `query_orchestrator_status()` with real EMA-based logic. Currently a hotfix.
+- **[Data] Auto-Backfill on Boot:** Implement backfill trigger when charts detect data gaps. Resolve "Premium -100%" edge case (snapshot `median_fee = 0.0`).
+- **[UX] Info Tooltips:** Add `ⓘ` button to each KPI card and chart with brief explainers (what it is, why it matters, how it's calculated).
+- **[Worker] `tx_hunter.py` — Advisory Engine:** Rewrite to PostgreSQL + REST polling. Study feasibility and cost of real-time advisory features before committing to implementation scope.
 
 ### Phase 8: True Sovereignty — 🦁 Q4 2026 (Endgame)
 - **[Infra]** Deploy Bitcoin Core Node (Pruned Mode, `prune=550`) in Docker.
@@ -80,4 +88,4 @@ The project addresses the auction market for Bitcoin block space.
 
 ---
 **Lead Engineer:** Israel (@ieshatchuell)
-**Status:** Phase 6.5 (Governance & Infrastructure & UI Polish) COMPLETED ✅. Session 7 (Frontend Polish) and Phase 7 (The Brain) next.
+**Status:** Session 7 (Frontend Polish & Visualization) COMPLETED ✅. Session 8 (The Brain & Logic Hardening) next.

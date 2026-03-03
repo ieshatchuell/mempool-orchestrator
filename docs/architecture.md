@@ -37,50 +37,60 @@ graph LR
 
 ## 2. Clean Architecture Layers
 
-The codebase follows strict dependency rules — inner layers never import from outer layers.
+The codebase follows strict dependency rules — inner layers never import from outer layers. All arrows flow **downward**: outer layers depend on inner layers, never the reverse.
 
 ```mermaid
-graph TB
-    subgraph "Domain Layer (Pure)"
-        D["domain/schemas.py<br/>Pydantic V2 Contracts<br/><i>Zero external deps</i>"]
+graph TD
+    subgraph PRESENTATION ["Presentation Layer"]
+        direction LR
+        M["api/main.py<br/><i>FastAPI Endpoints</i>"]
+        Q["api/queries.py<br/><i>Async Queries</i>"]
+        S["api/schemas.py<br/><i>Response Models</i>"]
     end
 
-    subgraph "Infrastructure Layer"
-        DB["infrastructure/database/<br/>SQLAlchemy 2.0 Async<br/>session.py + models.py"]
-        MSG["infrastructure/messaging/<br/>aiokafka Producer<br/>producer.py"]
+    subgraph APPLICATION ["Application Layer (Workers)"]
+        direction LR
+        W1["workers/ingestor.py<br/><i>WS → Kafka</i>"]
+        W2["workers/state_consumer.py<br/><i>Kafka → PostgreSQL</i>"]
     end
 
-    subgraph "Application Layer"
-        W1["workers/ingestor.py<br/>WS → Kafka"]
-        W2["workers/state_consumer.py<br/>Kafka → PostgreSQL"]
-        W3["workers/tx_hunter.py<br/>RBF/CPFP Advisory<br/><i>(Phase 7)</i>"]
+    subgraph INFRASTRUCTURE ["Infrastructure Layer"]
+        direction LR
+        DB["database/<br/><i>SQLAlchemy 2.0 Async</i><br/>session.py · models.py"]
+        MSG["messaging/<br/><i>aiokafka Producer</i><br/>producer.py"]
     end
 
-    subgraph "Presentation Layer"
-        Q["api/queries.py<br/>Async SQLAlchemy Queries"]
-        M["api/main.py<br/>FastAPI Endpoints"]
-        S["api/schemas.py<br/>Response Models"]
+    subgraph DOMAIN ["Domain Layer (Pure)"]
+        D["domain/schemas.py<br/><i>Pydantic V2 Contracts</i><br/>Zero external deps"]
     end
 
-    subgraph "Core"
-        C["core/config.py<br/>pydantic-settings"]
+    subgraph CORE ["Core"]
+        C["core/config.py<br/><i>pydantic-settings</i>"]
     end
 
-    W1 --> D
-    W1 --> MSG
-    W1 --> C
-    W2 --> D
-    W2 --> DB
-    W2 --> C
-    Q --> DB
+    %% Presentation → Infrastructure
     M --> Q
     M --> S
-    M --> C
+    Q --> DB
+
+    %% Workers → Infrastructure + Domain
+    W1 --> MSG
+    W1 --> D
+    W2 --> DB
+    W2 --> D
+
+    %% Infrastructure → Domain + Core
     DB --> C
     MSG --> C
 
-    style D fill:#2d6a4f,color:#fff
-    style C fill:#1b4332,color:#fff
+    %% Cross-layer → Core
+    M --> C
+
+    style DOMAIN fill:#2d6a4f,color:#fff,stroke:#2d6a4f
+    style CORE fill:#1b4332,color:#fff,stroke:#1b4332
+    style INFRASTRUCTURE fill:#1a3a5c,color:#fff,stroke:#1a3a5c
+    style APPLICATION fill:#7c4a1d,color:#fff,stroke:#7c4a1d
+    style PRESENTATION fill:#3a3a3a,color:#fff,stroke:#3a3a3a
 ```
 
 ## 3. Data Flow (Detailed)

@@ -193,7 +193,7 @@ export function AdvisorsPanel() {
   const { advisories, stuck_count, total_count } = data
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
+    <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-[0_1px_3px_rgba(0,0,0,0.04)] animate-fade-in-up">
       {/* Panel Header */}
       <div className="flex flex-col gap-3 border-b border-border px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-2.5">

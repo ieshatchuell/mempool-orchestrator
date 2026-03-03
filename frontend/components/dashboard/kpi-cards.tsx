@@ -131,42 +131,50 @@ export function KpiCards() {
 
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-      <KpiCard
-        label="Mempool Size"
-        value={formatBytes(data.mempool_bytes)}
-        unit="MB"
-        delta={formatDelta(data.delta_size_pct)}
-        deltaDirection={getDeltaDirection(data.delta_size_pct)}
-        icon={<Database className="h-4 w-4 text-info" />}
-        iconBg="bg-info-soft"
-      />
-      <KpiCard
-        label="Median Fee Rate"
-        value={data.median_fee.toFixed(1)}
-        unit="sat/vB"
-        delta={formatDelta(data.delta_fee_pct)}
-        deltaDirection={getDeltaDirection(data.delta_fee_pct)}
-        icon={<TrendingDown className="h-4 w-4 text-bitcoin" />}
-        iconBg="bg-bitcoin-soft"
-      />
-      <KpiCard
-        label="Pending Fees"
-        value={formatBtc(data.total_fee_sats)}
-        unit="BTC"
-        delta={formatDelta(data.delta_total_fee_pct)}
-        deltaDirection={getDeltaDirection(data.delta_total_fee_pct)}
-        icon={<Coins className="h-4 w-4 text-success" />}
-        iconBg="bg-success-soft"
-      />
-      <KpiCard
-        label="Blocks to Clear"
-        value={`~${data.blocks_to_clear}`}
-        unit="blocks"
-        delta={formatDelta(data.delta_blocks_pct)}
-        deltaDirection={getDeltaDirection(data.delta_blocks_pct)}
-        icon={<Layers className="h-4 w-4 text-muted-foreground" />}
-        iconBg="bg-muted"
-      />
+      <div className="animate-fade-in-up stagger-1 hover-lift">
+        <KpiCard
+          label="Mempool Size"
+          value={formatBytes(data.mempool_bytes)}
+          unit="MB"
+          delta={formatDelta(data.delta_size_pct)}
+          deltaDirection={getDeltaDirection(data.delta_size_pct)}
+          icon={<Database className="h-4 w-4 text-info" />}
+          iconBg="bg-info-soft"
+        />
+      </div>
+      <div className="animate-fade-in-up stagger-2 hover-lift">
+        <KpiCard
+          label="Median Fee Rate"
+          value={data.median_fee.toFixed(1)}
+          unit="sat/vB"
+          delta={formatDelta(data.delta_fee_pct)}
+          deltaDirection={getDeltaDirection(data.delta_fee_pct)}
+          icon={<TrendingDown className="h-4 w-4 text-bitcoin" />}
+          iconBg="bg-bitcoin-soft"
+        />
+      </div>
+      <div className="animate-fade-in-up stagger-3 hover-lift">
+        <KpiCard
+          label="Pending Fees"
+          value={formatBtc(data.total_fee_sats)}
+          unit="BTC"
+          delta={formatDelta(data.delta_total_fee_pct)}
+          deltaDirection={getDeltaDirection(data.delta_total_fee_pct)}
+          icon={<Coins className="h-4 w-4 text-success" />}
+          iconBg="bg-success-soft"
+        />
+      </div>
+      <div className="animate-fade-in-up stagger-4 hover-lift">
+        <KpiCard
+          label="Blocks to Clear"
+          value={`~${data.blocks_to_clear}`}
+          unit="blocks"
+          delta={formatDelta(data.delta_blocks_pct)}
+          deltaDirection={getDeltaDirection(data.delta_blocks_pct)}
+          icon={<Layers className="h-4 w-4 text-muted-foreground" />}
+          iconBg="bg-muted"
+        />
+      </div>
     </div>
   )
 }
