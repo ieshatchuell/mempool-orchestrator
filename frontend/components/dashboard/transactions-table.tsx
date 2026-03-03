@@ -33,6 +33,48 @@ function formatFeeRange(range: number[]): string {
   return `${min} - ${max}`
 }
 
+function FeeRangeMiniBar({ range }: { range: number[] }) {
+  if (!range || range.length < 2) return null
+  const min = range[0]
+  const max = range[range.length - 1]
+  if (max === 0) return null
+
+  return (
+    <div className="mt-1 h-1 w-full max-w-[80px] overflow-hidden rounded-full bg-muted">
+      <div
+        className="h-full rounded-full"
+        style={{
+          width: `${Math.min(100, (min / max) * 100 + 20)}%`,
+          background: `linear-gradient(90deg, var(--success) 0%, var(--bitcoin) 50%, var(--destructive) 100%)`,
+          opacity: 0.7,
+        }}
+      />
+    </div>
+  )
+}
+
+const POOL_COLORS: Record<string, string> = {
+  "Foundry USA": "bg-blue-500",
+  "AntPool": "bg-orange-500",
+  "ViaBTC": "bg-green-500",
+  "F2Pool": "bg-purple-500",
+  "Binance Pool": "bg-yellow-500",
+  "MARA Pool": "bg-red-500",
+  "SpiderPool": "bg-cyan-500",
+}
+
+function PoolBadge({ name }: { name: string | null }) {
+  const poolName = name ?? "Unknown"
+  const dotColor = POOL_COLORS[poolName] ?? "bg-muted-foreground/40"
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className={`inline-block h-2 w-2 rounded-full ${dotColor}`} />
+      <span className="text-sm text-foreground">{poolName}</span>
+    </div>
+  )
+}
+
 function formatTime(iso: string): string {
   try {
     const d = new Date(iso)
@@ -79,7 +121,7 @@ export function TransactionsTable() {
   const { blocks } = data
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-[0_1px_3px_rgba(0,0,0,0.04)] dark:shadow-none">
+    <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-[0_1px_3px_rgba(0,0,0,0.04)] dark:shadow-none animate-fade-in-up">
       {/* Table Header */}
       <div className="flex items-center justify-between border-b border-border px-5 py-4">
         <div className="flex items-center gap-2.5">
@@ -167,9 +209,14 @@ export function TransactionsTable() {
                   <TableCell className="text-right font-mono text-sm tabular-nums text-foreground">
                     {formatSize(block.size_bytes)}
                   </TableCell>
-                  <TableCell className="text-right font-mono text-sm tabular-nums text-muted-foreground">
-                    {formatFeeRange(block.fee_range)}
-                    <span className="text-muted-foreground/60"> sat/vB</span>
+                  <TableCell className="text-right">
+                    <div className="flex flex-col items-end">
+                      <span className="font-mono text-sm tabular-nums text-muted-foreground">
+                        {formatFeeRange(block.fee_range)}
+                        <span className="text-muted-foreground/60"> sat/vB</span>
+                      </span>
+                      <FeeRangeMiniBar range={block.fee_range} />
+                    </div>
                   </TableCell>
                   <TableCell className="text-right">
                     <span className="font-mono text-sm font-medium tabular-nums text-bitcoin">
@@ -186,9 +233,7 @@ export function TransactionsTable() {
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1.5">
-                      <span className="text-sm text-foreground">
-                        {block.pool_name ?? "Unknown"}
-                      </span>
+                      <PoolBadge name={block.pool_name} />
                       <ExternalLink className="h-3.5 w-3.5 text-muted-foreground/40 transition-colors hover:text-muted-foreground" />
                     </div>
                   </TableCell>

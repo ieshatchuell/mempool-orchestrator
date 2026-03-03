@@ -1,5 +1,7 @@
 import { DashboardHeader } from "@/components/dashboard/header"
 import { KpiCards } from "@/components/dashboard/kpi-cards"
+import { FeeHistogram } from "@/components/dashboard/fee-histogram"
+import { BlockWeightChart } from "@/components/dashboard/block-weight-chart"
 import { AdvisorsPanel } from "@/components/dashboard/advisors-panel"
 import { TransactionsTable } from "@/components/dashboard/transactions-table"
 import { StrategyPanel } from "@/components/dashboard/strategy-panel"
@@ -14,6 +16,15 @@ export default function Page() {
         {/* KPI Row */}
         <section aria-label="Key metrics">
           <KpiCards />
+        </section>
+
+        {/* Analytics Row: Fee Distribution + Block Weight */}
+        <section
+          className="grid grid-cols-1 gap-6 lg:grid-cols-2"
+          aria-label="Analytics charts"
+        >
+          <FeeHistogram />
+          <BlockWeightChart />
         </section>
 
         {/* Middle Row: Advisors + Strategy Panel */}
@@ -39,3 +50,4 @@ export default function Page() {
     </div>
   )
 }
+

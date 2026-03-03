@@ -1683,3 +1683,83 @@ However, the Dashboard's "Strategy & Trend" card depends on `/api/orchestrator/s
 - [main.py](backend/src/api/main.py) — Endpoint preserved
 - [schemas.py](backend/src/api/schemas.py) — Response models preserved
 
+---
+
+## ADR-020: Frontend Visualization Strategy
+
+- **Date:** 2026-03-03
+- **Status:** ✅ IMPLEMENTED (Visual base)
+- **Phase:** Session 7 — Frontend Polish
+
+### Context
+
+The dashboard required richer visualizations to communicate complex market data:
+
+1. **Fee Distribution Opacity:** The `fee_range` JSONB array (7-band: min, p10, p25, p50, p75, p90, max) was stored in PostgreSQL and served via the API, but the frontend only displayed it as a text range (e.g., "1 - 179 sat/vB") in the blocks table — losing the distribution shape entirely.
+
+2. **Block Fullness Invisibility:** Block sizes (`size_bytes`) were shown as raw numbers (e.g., "1.59 MB") with no context of how full each block was relative to the 4 MB maximum weight limit.
+
+3. **Static Page Entry:** All dashboard components appeared instantly on load with no visual hierarchy — making the page feel flat and unfinished.
+
+4. **Pool Identity:** Mining pool names were plain text with no visual differentiation between pools.
+
+### Decision
+
+**D1 — Fee Distribution Histogram (`fee-histogram.tsx`):**
+- Recharts `BarChart` with 7 bars mapping to the `fee_range` percentile bands.
+- Color gradient from green (Min, cheap) through bitcoin gold (P50, median) to red (Max, premium).
+- Custom tooltip showing exact sat/vB value per band.
+- Data source: latest confirmed block's `fee_range` from `useRecentBlocks()`.
+
+**D2 — Block Weight Chart (`block-weight-chart.tsx`):**
+- Horizontal progress bars showing block fullness as `(size_bytes / 4,000,000) * 100`.
+- Color coding: green (>90% full), bitcoin/amber (70–90%), muted (<70%).
+- Labels: "Full", "Heavy", "Normal", "Light". Pool name badge + tx count inline.
+
+**D3 — Table Micro-Visualizations (`transactions-table.tsx`):**
+- `FeeRangeMiniBar`: Inline horizontal gradient bar per block row showing the fee spread visually.
+- `PoolBadge`: Colored dot indicator per mining pool (6 major pools mapped) replacing plain text.
+
+**D4 — CSS Animation System (`globals.css`):**
+- `@keyframes fade-in-up`: 0→1 opacity, 8px translateY, 0.4s ease-out.
+- Stagger classes: `.stagger-1` through `.stagger-5` (60ms increments) for sequential card entry.
+- `hover-lift`: 2px Y translate on hover with subtle box-shadow.
+- Applied to all 6 dashboard components for cohesive page-entry feel.
+
+**D5 — Architecture Diagram Refactor (`architecture.md`):**
+- Rewrote "Clean Architecture Layers" Mermaid diagram from `graph TB` (spaghetti) to `graph TD` (strict top-down).
+- Color-coded subgraphs: Presentation (gray), Application (brown), Infrastructure (blue), Domain (green), Core (dark green).
+- All arrows flow downward — dependency rule is now visually self-documenting.
+- Removed phantom `tx_hunter.py` node (Phase 7, not yet wired).
+
+**D6 — Info Tooltips (Planned — Phase 8):**
+- Each KPI card and chart will include a small info button (`?` or `ⓘ`) that reveals a brief tooltip explaining: what the metric is, why it matters, and how it's calculated.
+- Deferred to Session 8 to maintain scope discipline.
+
+### Consequences
+
+**Positive:**
+1. Fee distribution shape is now immediately visible — analysts can spot bimodal fee markets at a glance.
+2. Block fullness provides instant context for how competitive the fee market is.
+3. Staggered entry animations create visual hierarchy and a premium feel.
+4. Pool badges improve scannability of the blocks table.
+5. Architecture diagram is now self-documenting for onboarding.
+
+**Trade-offs:**
+1. Recharts adds ~150 KB to the client bundle (already a dependency from the sparkline chart).
+2. `fade-in-up` replays on every React re-render — may need conditional animation logic if polling causes visual glitches.
+3. `POOL_COLORS` map is hardcoded for 6 pools — unknown pools fall back to muted gray dot.
+
+### Observations (Post-Review, Not Fixed)
+1. **Data Gaps:** Charts show gaps when blocks table has insufficient history — requires `auto-backfill on boot` (Session 8).
+2. **Confidence Hardcode:** Strategy engine confidence values (0.5 / 0.8) are hardcoded in `queries.py` — needs real calculation logic (Session 8).
+3. **Premium -100%:** Occurs when `current_median_fee = 0.0` from an empty mempool snapshot — needs floor guard (Session 8).
+
+### Related Files
+- [fee-histogram.tsx](frontend/components/dashboard/fee-histogram.tsx) — Fee distribution chart
+- [block-weight-chart.tsx](frontend/components/dashboard/block-weight-chart.tsx) — Block fullness bars
+- [transactions-table.tsx](frontend/components/dashboard/transactions-table.tsx) — FeeRangeMiniBar + PoolBadge
+- [globals.css](frontend/app/globals.css) — Animation keyframes + utilities
+- [kpi-cards.tsx](frontend/components/dashboard/kpi-cards.tsx) — Staggered animations
+- [page.tsx](frontend/app/page.tsx) — Analytics section layout
+- [architecture.md](docs/architecture.md) — Refactored Mermaid diagram

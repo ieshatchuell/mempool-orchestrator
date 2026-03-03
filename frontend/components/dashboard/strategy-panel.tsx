@@ -182,7 +182,7 @@ export function StrategyPanel() {
     }
 
     return (
-        <div className="flex flex-col gap-4 rounded-2xl border border-border bg-card p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)] dark:shadow-none">
+        <div className="flex flex-col gap-4 rounded-2xl border border-border bg-card p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)] dark:shadow-none animate-fade-in-up">
             {/* Header */}
             <div className="flex items-center justify-between">
                 <h2 className="text-sm font-semibold text-foreground">
