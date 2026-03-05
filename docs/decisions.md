@@ -1750,10 +1750,10 @@ The dashboard required richer visualizations to communicate complex market data:
 2. `fade-in-up` replays on every React re-render — may need conditional animation logic if polling causes visual glitches.
 3. `POOL_COLORS` map is hardcoded for 6 pools — unknown pools fall back to muted gray dot.
 
-### Observations (Post-Review, Not Fixed)
-1. **Data Gaps:** Charts show gaps when blocks table has insufficient history — requires `auto-backfill on boot` (Session 8).
-2. **Confidence Hardcode:** Strategy engine confidence values (0.5 / 0.8) are hardcoded in `queries.py` — needs real calculation logic (Session 8).
-3. **Premium -100%:** Occurs when `current_median_fee = 0.0` from an empty mempool snapshot — needs floor guard (Session 8).
+### Observations (Post-Review) — ✅ RESOLVED in Session 8
+1. ~~**Data Gaps:** Charts show gaps when blocks table has insufficient history — requires `auto-backfill on boot`.~~ → ✅ Fixed: `src/workers/backfill.py` (ADR-020b)
+2. ~~**Confidence Hardcode:** Strategy engine confidence values (0.5 / 0.8) are hardcoded in `queries.py` — needs real calculation logic.~~ → ✅ Fixed: `_compute_confidence()` (ADR-020b)
+3. ~~**Premium -100%:** Occurs when `current_median_fee = 0.0` from an empty mempool snapshot — needs floor guard.~~ → ✅ Fixed: guard clause + ADR-021 enrichment
 
 ### Related Files
 - [fee-histogram.tsx](frontend/components/dashboard/fee-histogram.tsx) — Fee distribution chart
@@ -1763,3 +1763,160 @@ The dashboard required richer visualizations to communicate complex market data:
 - [kpi-cards.tsx](frontend/components/dashboard/kpi-cards.tsx) — Staggered animations
 - [page.tsx](frontend/app/page.tsx) — Analytics section layout
 - [architecture.md](docs/architecture.md) — Refactored Mermaid diagram
+
+---
+
+## ADR-020b: Session 8 — The Brain & Logic Hardening
+**Date:** 2026-03-05
+**Status:** ✅ IMPLEMENTED
+**Phase:** Phase 7 — The Brain & UI Maturity
+
+### Context
+
+Session 7 (ADR-020) delivered a polished frontend but identified three critical backend gaps (see ADR-020 Post-Review Observations):
+1. **Data Gaps:** Historical charts broke on container restart — no mechanism to detect/fill missing blocks.
+2. **Hardcoded Confidence:** Strategy engine used static `0.5` / `0.8` confidence values — no real market signal.
+3. **Premium -100%:** `fee_premium_pct` became `-100%` when `current_median_fee = 0.0`.
+
+Additionally, the `tx_hunter.py` advisory engine was non-functional (dead imports to removed modules), and the dashboard lacked accessibility tooltips for non-expert users.
+
+### Decisions & Implementation
+
+#### 1. Auto-Backfill on Boot
+- **New file:** `src/workers/backfill.py` — Incremental gap detection.
+- **Logic:** Queries `max(height)` from PostgreSQL blocks table, compares to chain tip from `mempool.space/api/blocks/tip/height`, fetches only missing blocks.
+- **Safety:** `INSERT ... ON CONFLICT DO NOTHING` — idempotent and safe for replays.
+- **Integration:** API lifespan (`main.py`) calls `incremental_backfill()` on boot, wrapped in try/except (non-fatal — API starts even if backfill fails).
+- **Justfile:** `just backfill` → incremental worker. `just backfill-legacy` → old destructive script (deprecated).
+
+#### 2. Real Confidence Calculation
+- **New function:** `_compute_confidence()` in `queries.py` — replaces hardcoded `0.5` / `0.8`.
+- **Signals used:**
+  - **EMA trend** (FALLING → boosts patient, RISING → boosts reliable)
+  - **Fee premium** (>20% → boosts patient, <10% → boosts reliable)
+  - **Divergence ratio** (`|current - ema| / ema` — high divergence = wait opportunity)
+- **Bounds:** Clamped to `[0.1, 0.95]` — never fully certain or fully dismissive.
+
+#### 3. Premium -100% Fix
+- **Guard clause:** `if current_median_fee <= 0 or historical_median_fee <= 0: fee_premium_pct = 0.0`
+- No data = no signal (neutral instead of catastrophic `-100%`).
+
+#### 4. Advisory Engine (`tx_hunter.py` Rewrite)
+- **Complete rewrite** — old code imported dead modules (`src.ingestors.mempool_api`, `src.storage.watchlist`).
+- **New architecture:** Async polling loop (60s interval).
+  1. Query current median fee from `mempool_snapshots`.
+  2. Fetch recent transactions from `GET /api/mempool/recent` (external API).
+  3. Filter stuck TXs: `fee_rate < median * 0.5`.
+  4. Calculate **RBF fee** (BIP-125): `max(target_rate, original_rate + 1.0) * vsize`.
+  5. Calculate **CPFP fee** (Package Relay): `(target_rate * (parent_vsize + child_vsize)) - parent_fee`.
+  6. Write advisories to `advisories` table via `AdvisoryRecord` ORM (upsert).
+- **API wired:** `query_watchlist_advisories()` reads real data from PostgreSQL (was a stub returning `[]`).
+- **Justfile:** `just hunter` recipe added.
+
+#### 5. UX Tooltips
+- Added `ⓘ` info icons with shadcn `<Tooltip>` to:
+  - 4 KPI Cards (Mempool Size, Median Fee Rate, Pending Fees, Blocks to Clear)
+  - Fee Distribution chart header
+  - Block Weight chart header
+- Each tooltip explains the metric in plain language for non-expert users.
+
+### Test Coverage
+
+| Test File | New Tests | Coverage |
+|---|---|---|
+| `test_backfill.py` [NEW] | 6 | Gap detection, chain tip fetch, empty DB, error handling |
+| `test_queries.py` [NEW] | 11 | Trend signals, premium signals, bounds clamping, zero guards |
+| `test_tx_hunter.py` [NEW] | 10 | BIP-125 RBF math, CPFP math, stuck classification, edge cases |
+
+**Total after Session 8:** 78 tests (31 new + 47 existing), 0 failures.
+
+### Consequences
+
+**Positive:**
+1. **Self-healing data:** Block gaps are automatically filled on API restart.
+2. **Real intelligence:** Confidence values react to market conditions instead of static numbers.
+3. **Advisory engine online:** First time RBF/CPFP advisories are generated and stored.
+4. **Accessible UX:** Non-expert users can understand every KPI and chart at a glance.
+
+**Trade-offs:**
+1. **Backfill latency:** Incremental backfill adds ~2-5s to API cold start when gaps exist.
+2. **Advisory accuracy:** `tx_hunter` depends on external API availability (`mempool.space/api/mempool/recent`).
+3. **Tooltip maintenance:** Tooltip text is hardcoded in frontend components — no i18n yet.
+
+### Related Files
+- [backfill.py](backend/src/workers/backfill.py) — Incremental backfill worker
+- [queries.py](backend/src/api/queries.py) — Confidence calculation + watchlist query
+- [tx_hunter.py](backend/src/workers/tx_hunter.py) — Advisory engine
+- [main.py](backend/src/api/main.py) — API lifespan with auto-backfill
+- [kpi-cards.tsx](frontend/components/dashboard/kpi-cards.tsx) — KPI tooltips
+- [fee-histogram.tsx](frontend/components/dashboard/fee-histogram.tsx) — Chart tooltip
+- [block-weight-chart.tsx](frontend/components/dashboard/block-weight-chart.tsx) — Chart tooltip
+
+---
+
+## ADR-021: Real-Time Fee Enrichment Strategy
+**Date:** 2026-03-05
+**Status:** ✅ IMPLEMENTED
+**Phase:** Session 8 — The Brain & Logic Hardening
+
+### Context
+
+The KPI "Median Fee Rate" was displaying `0.0 sat/vB` consistently. Root cause analysis revealed a **data source mismatch in the ingestion pipeline:**
+
+1. The WebSocket `mempoolInfo` event does NOT include a `medianFee` field — it only provides `mempoolMinFee` (the network relay floor, typically `~0.00001 BTC` or `null`).
+2. The State Consumer mapped `info.mempool_min_fee or 0.0` to `MempoolSnapshot.median_fee`, which always produced `0.0`.
+3. This cascaded: `queries.py` read `0.0` → KPI showed `0.0` → fee premium calculated as `-100%`.
+
+**The actual market median fee** is available in the `mempool-blocks` event — specifically `mempool-blocks[0].medianFee`, which represents the fee rate of the **next block to be mined** (the candidate block). This is the true "market price" for immediate confirmation.
+
+### Decision
+
+Implement a **Data Enrichment** pattern in the Ingestor (`src/workers/ingestor.py`) that injects the market median fee from the projected blocks into the mempool stats before schema validation.
+
+**Enrichment Rule:**
+1. When a WebSocket message arrives containing `mempoolInfo`, inspect `mempool-blocks`.
+2. Extract `medianFee` from **Block Candidate #0** (the next block to mine).
+3. Inject this value into `mempoolInfo["medianFee"]` before Pydantic validation.
+4. **Fallback:** If `mempool-blocks` is empty (network restarting), use `1.0 sat/vB` (Bitcoin's minimum relay fee).
+
+### Implementation
+
+**File changes:**
+
+| File | Change |
+|---|---|
+| `src/workers/ingestor.py` | Enrichment logic: extracts `medianFee` from `mempool-blocks[0]`, injects into `mempoolInfo` dict before `MempoolStats.model_validate()` |
+| `src/domain/schemas.py` | Added `median_fee: float = Field(default=1.0)` to `MempoolInfo` — backward-compatible with old Kafka messages |
+| `src/workers/state_consumer.py` | Changed `median_fee=info.mempool_min_fee or 0.0` → `median_fee=info.median_fee` |
+
+**New tests (4):**
+- `test_enrichment_injects_median_fee` — verifies Block #0 medianFee flows through to Kafka payload
+- `test_enrichment_fallback_empty_blocks` — verifies 1.0 fallback when no projected blocks
+- `test_mempool_info_median_fee_default` — schema defaults to 1.0
+- `test_mempool_info_median_fee_enriched` — schema accepts enriched value
+
+### Consequences
+
+**Positive:**
+1. **Accurate KPI:** Median Fee Rate now reflects the real market price (next-block entry cost).
+2. **Leading Indicator:** The value comes from the projected block template, not from historical data.
+3. **Backward Compatible:** `MempoolInfo.median_fee` defaults to 1.0, so old Kafka messages won't crash.
+4. **Non-invasive:** Enrichment happens on the raw dict before Pydantic, preserving the validation pipeline.
+
+**Trade-offs:**
+1. **Coupling:** The stats handler now depends on `mempool-blocks` data arriving in the same WebSocket message. If the API ever splits these into separate messages, enrichment would fall back to 1.0.
+2. **Block #0 assumption:** We assume `mempool-blocks[0]` is always the next-to-mine block. This is correct per mempool.space API documentation.
+
+### Verification
+
+```bash
+cd backend && uv run pytest -v  # 78 passed, 0 failed (0.24s)
+```
+
+### Related Files
+- [ingestor.py](backend/src/workers/ingestor.py) — Enrichment logic
+- [schemas.py](backend/src/domain/schemas.py) — MempoolInfo.median_fee field
+- [state_consumer.py](backend/src/workers/state_consumer.py) — Snapshot materialization fix
+- [test_ingestor.py](backend/tests/test_ingestor.py) — Enrichment tests
+- [test_schemas.py](backend/tests/test_schemas.py) — Schema default tests
+

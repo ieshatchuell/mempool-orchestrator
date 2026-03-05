@@ -62,12 +62,9 @@ The project addresses the auction market for Bitcoin block space.
 - ~~**[Cleanup] Logic Migration:** Orchestrator Docker container removed. Market analytics (EMA, Trend, Strategy) migrated to inline `query_orchestrator_status()` in API layer.~~ ✅ Done
 - ~~**[Docs] Full Update:** README, architecture.md, strategy.md updated.~~ ✅ Done
 
-### Phase 7: The Brain (Camino B) — 🧠 PLANNED
-- **[Worker] Reconnect `tx_hunter.py`:** Rewrite to consume from Kafka and populate the `advisories` table with RBF/CPFP recommendations.
-- **[API] Wire Advisory Endpoints:** Connect watchlist GET/POST/DELETE to PostgreSQL.
-- **[Feature] Automated Showcase:** Autonomous curation of "interesting" transactions.
+### Phase 7: The Brain & UI Maturity — ✅ COMPLETED
 
-### Session 7: Frontend Polish & Visualization — ✅ COMPLETED (ADR-020)
+#### Session 7: Frontend Polish & Visualization (ADR-020)
 - ~~**[UI] Fee Histograms:** Recharts bar chart for 7-band `fee_range` distribution.~~ ✅ Done
 - ~~**[UI] Block Weight Chart:** Horizontal fullness bars with pool badges and color-coded capacity.~~ ✅ Done
 - ~~**[UI] Table Micro-Viz:** Inline fee range gradient bar + colored pool name badges.~~ ✅ Done
@@ -75,11 +72,14 @@ The project addresses the auction market for Bitcoin block space.
 - ~~**[Docs] Architecture Diagram:** Rewrote Mermaid diagram — strict `graph TD`, color-coded layers, no spaghetti.~~ ✅ Done
 - ~~**[QA] Type Safety Audit:** `types.ts` ↔ `schemas.py` — all 4 endpoints verified in sync.~~ ✅ Done
 
-### Session 8: The Brain & Logic Hardening — 🧠 NEXT
-- **[Logic] Confidence Calculation:** Replace hardcoded confidence values (0.5/0.8) in `query_orchestrator_status()` with real EMA-based logic. Currently a hotfix.
-- **[Data] Auto-Backfill on Boot:** Implement backfill trigger when charts detect data gaps. Resolve "Premium -100%" edge case (snapshot `median_fee = 0.0`).
-- **[UX] Info Tooltips:** Add `ⓘ` button to each KPI card and chart with brief explainers (what it is, why it matters, how it's calculated).
-- **[Worker] `tx_hunter.py` — Advisory Engine:** Rewrite to PostgreSQL + REST polling. Study feasibility and cost of real-time advisory features before committing to implementation scope.
+#### Session 8: The Brain & Logic Hardening
+- ~~**[Data] Auto-Backfill on Boot:** Incremental gap detection in `src/workers/backfill.py`, triggered in API lifespan (non-fatal). `scripts/backfill_blocks.py` deprecated.~~ ✅ Done
+- ~~**[Logic] Confidence Calculation:** `_compute_confidence()` replaces hardcoded 0.5/0.8 with real EMA divergence + trend + premium signals.~~ ✅ Done
+- ~~**[Fix] Premium -100%:** Guard clause for `current_median_fee <= 0` in `query_orchestrator_status()`.~~ ✅ Done
+- ~~**[UX] Info Tooltips:** `ⓘ` HoverCard on all KPI cards, Fee Histogram, and Block Weight chart.~~ ✅ Done
+- ~~**[Worker] Advisory Engine:** `tx_hunter.py` rewritten — polls `/api/mempool/recent`, calculates BIP-125 RBF + CPFP fees, writes to `advisories` table.~~ ✅ Done
+- ~~**[API] Wire Watchlist:** `query_watchlist_advisories()` reads real `AdvisoryRecord` data from PostgreSQL.~~ ✅ Done
+- ~~**[QA] Test Suite:** 74 tests (all green). 27 new tests (backfill: 6, queries: 11, tx_hunter: 10).~~ ✅ Done
 
 ### Phase 8: True Sovereignty — 🦁 Q4 2026 (Endgame)
 - **[Infra]** Deploy Bitcoin Core Node (Pruned Mode, `prune=550`) in Docker.
@@ -88,4 +88,4 @@ The project addresses the auction market for Bitcoin block space.
 
 ---
 **Lead Engineer:** Israel (@ieshatchuell)
-**Status:** Session 7 (Frontend Polish & Visualization) COMPLETED ✅. Session 8 (The Brain & Logic Hardening) next.
+**Status:** Session 8 (The Brain & Logic Hardening) COMPLETED ✅. Phase 8 (True Sovereignty) next.

@@ -35,10 +35,22 @@ from src.api.schemas import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Manage DB engine lifecycle — DDL bootstrap + clean dispose."""
+    """Manage DB engine lifecycle — DDL bootstrap + auto-backfill + clean dispose."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     logger.info("API DDL bootstrap complete — tables ready.")
+
+    # Auto-backfill: detect and fill block gaps (non-fatal)
+    try:
+        from src.workers.backfill import incremental_backfill
+        inserted = await incremental_backfill()
+        if inserted > 0:
+            logger.info(f"Auto-backfill: inserted {inserted} missing blocks.")
+        else:
+            logger.info("Auto-backfill: no gaps detected.")
+    except Exception as e:
+        logger.warning(f"Auto-backfill failed (non-fatal): {e}")
+
     yield
     await engine.dispose()
     logger.info("API DB engine disposed.")

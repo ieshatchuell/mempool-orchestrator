@@ -77,8 +77,21 @@ async def route_message(data: dict[str, Any], producer: MempoolProducer) -> None
     handled = False
 
     try:
-        # Event Type 1: Mempool Stats
+        # Event Type 1: Mempool Stats (with ADR-021 fee enrichment)
         if "mempoolInfo" in data:
+            # ADR-021: Enrich mempoolInfo with market median fee
+            # The WebSocket mempoolInfo lacks medianFee. We extract it
+            # from mempool-blocks[0] (the next block to be mined), which
+            # represents the real market price for immediate confirmation.
+            blocks_data = data.get("mempool-blocks", [])
+            if isinstance(blocks_data, list) and len(blocks_data) > 0:
+                block_0 = blocks_data[0]
+                market_fee = block_0.get("medianFee", 1.0)
+            else:
+                market_fee = 1.0  # Fallback: MinRelayTxFee
+
+            data["mempoolInfo"]["medianFee"] = market_fee
+
             stats = MempoolStats.model_validate(data)
             await producer.send(
                 key="stats",
@@ -86,7 +99,8 @@ async def route_message(data: dict[str, Any], producer: MempoolProducer) -> None
             )
             logger.info(
                 f"MempoolStats: size={stats.mempool_info.size}, "
-                f"bytes={stats.mempool_info.bytes}"
+                f"bytes={stats.mempool_info.bytes}, "
+                f"median_fee={stats.mempool_info.median_fee:.2f} sat/vB"
             )
             handled = True
 

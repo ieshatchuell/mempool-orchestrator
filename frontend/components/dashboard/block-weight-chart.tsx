@@ -1,7 +1,12 @@
 "use client"
 
 import { useRecentBlocks } from "@/hooks/use-recent-blocks"
-import { AlertCircle, Box } from "lucide-react"
+import { AlertCircle, Box, Info } from "lucide-react"
+import {
+    Tooltip,
+    TooltipTrigger,
+    TooltipContent,
+} from "@/components/ui/tooltip"
 
 // ── Constants ───────────────────────────────────────────────────
 
@@ -152,6 +157,16 @@ export function BlockWeightChart() {
                     <h2 className="text-sm font-semibold text-foreground">
                         Block Weight
                     </h2>
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <button className="inline-flex items-center justify-center rounded-full text-muted-foreground/50 hover:text-muted-foreground transition-colors" aria-label="Info about Block Weight">
+                                <Info className="h-3.5 w-3.5" />
+                            </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-[240px]">
+                            Visual comparison of recent block sizes vs the 4MB SegWit limit. Blocks over 90% capacity indicate high network demand. Pool badges show which mining pool found each block.
+                        </TooltipContent>
+                    </Tooltip>
                 </div>
                 <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
                     <span className="flex items-center gap-1">
