@@ -227,3 +227,26 @@ class TestAliasMapping:
         assert "totalFees" in serialized
         assert "medianFee" in serialized
         assert "feeRange" in serialized
+
+    # ── ADR-021: median_fee Default ──────────────────────────────
+
+    def test_mempool_info_median_fee_default(self):
+        """ADR-021: MempoolInfo without medianFee defaults to 1.0 (MinRelayTxFee)."""
+        data = {
+            "size": 100000,
+            "bytes": 50000000,
+            "totalFee": 1.0,
+        }
+        info = MempoolInfo.model_validate(data)
+        assert info.median_fee == 1.0  # Default fallback
+
+    def test_mempool_info_median_fee_enriched(self):
+        """ADR-021: MempoolInfo with medianFee uses the provided value."""
+        data = {
+            "size": 100000,
+            "bytes": 50000000,
+            "totalFee": 1.0,
+            "medianFee": 12.5,
+        }
+        info = MempoolInfo.model_validate(data)
+        assert info.median_fee == 12.5

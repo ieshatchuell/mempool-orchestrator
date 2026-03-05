@@ -150,6 +150,7 @@ class MempoolInfo(BaseModel):
     total_fee: int = Field(..., description="Total fees in Satoshis")
     mempool_min_fee: Optional[float] = Field(None, description="Minimum fee rate")
     min_relay_tx_fee: Optional[float] = Field(None, description="Minimum relay fee rate")
+    median_fee: float = Field(default=1.0, description="Market median fee rate in sat/vB (enriched from Block #0, ADR-021)")
 
     @field_validator("total_fee", mode="before")
     @classmethod

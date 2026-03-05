@@ -29,8 +29,10 @@ mempool.space WS ──→ Ingestor ──→ Redpanda ──→ State Consumer 
 | **Domain** | `src/domain/schemas.py` | Pydantic V2 contracts (zero external deps) |
 | **Infrastructure** | `src/infrastructure/database/` | SQLAlchemy 2.0 async engine + ORM models |
 | **Infrastructure** | `src/infrastructure/messaging/` | aiokafka producer with lifecycle management |
-| **Workers** | `src/workers/ingestor.py` | WebSocket → Kafka (Signal & Fetch pattern) |
+| **Workers** | `src/workers/ingestor.py` | WebSocket → Kafka (Signal & Fetch pattern, ADR-021 fee enrichment) |
 | **Workers** | `src/workers/state_consumer.py` | Kafka → PostgreSQL (idempotent materialization + Snapshot pattern) |
+| **Workers** | `src/workers/backfill.py` | Incremental block gap detection + auto-fill on boot |
+| **Workers** | `src/workers/tx_hunter.py` | Advisory engine: polls stuck TXs, calculates RBF/CPFP fees |
 | **API** | `src/api/` | Read-only FastAPI endpoints |
 | **Core** | `src/core/config.py` | Centralized config via `pydantic-settings` |
 
@@ -57,7 +59,7 @@ cp .env.example .env
 │   │   ├── infrastructure/
 │   │   │   ├── database/     # SQLAlchemy async engine + ORM models
 │   │   │   └── messaging/    # aiokafka producer
-│   │   └── workers/          # Async workers (ingestor, state_consumer)
+│   │   └── workers/          # Async workers (ingestor, state_consumer, backfill, tx_hunter)
 │   ├── scripts/              # Maintenance (backfill, migrations)
 │   └── tests/
 ├── frontend/                 # Next.js + shadcn/ui dashboard
@@ -79,12 +81,13 @@ just infra-status     # View running containers
 just db-viewer        # Open pgAdmin in browser (port 5050)
 
 # Data Pipeline
-just backfill         # Backfill last 144 blocks (~24h)
+just backfill         # Incremental block backfill (gap detection)
 just radar            # Launch Ingestor (WS → Kafka)
 just state-writer     # Launch State Consumer (Kafka → PostgreSQL)
+just hunter           # Launch Advisory Engine (RBF/CPFP scanner)
 
 # API & Frontend
-just api              # Start FastAPI server (port 8000)
+just api              # Start FastAPI server (port 8000, auto-backfills on boot)
 just dashboard        # Launch Next.js dashboard (port 3000)
 
 # Maintenance
@@ -139,21 +142,24 @@ just sync             # Sync backend dependencies
 |---|---|---|
 | `GET` | `/api/mempool/stats` | Mempool KPIs: size, fees, blocks_to_clear, 1h deltas |
 | `GET` | `/api/blocks/recent` | Confirmed blocks with pool_name and fee_range |
-| `GET` | `/api/orchestrator/status` | Market analytics: EMA, trend, strategy (inline SQL/Python) |
-| `GET` | `/api/watchlist` | Tracked transactions (stub — Phase 7) |
+| `GET` | `/api/orchestrator/status` | Market analytics: EMA, trend, real-time confidence (dynamic) |
+| `GET` | `/api/watchlist` | Tracked transactions with RBF/CPFP advisories |
 
 ## Testing
 
 ```bash
-just test    # 47 tests
+just test    # 78 tests
 ```
 
 **Test Coverage:**
 - `tests/test_config.py`: Environment variable validation (12 tests)
-- `tests/test_schemas.py`: Pydantic V2 contract validation
-- `tests/test_ingestor.py`: WebSocket routing logic
-- `tests/test_kafka_producer.py`: Async producer wrapper
-- `tests/test_state_consumer.py`: ORM models + Snapshot pattern
+- `tests/test_schemas.py`: Pydantic V2 contract validation (13 tests)
+- `tests/test_ingestor.py`: WebSocket routing + ADR-021 enrichment (11 tests)
+- `tests/test_kafka_producer.py`: Async producer wrapper (7 tests)
+- `tests/test_state_consumer.py`: ORM models + Snapshot pattern (8 tests)
+- `tests/test_backfill.py`: Incremental gap detection (6 tests)
+- `tests/test_queries.py`: Confidence calculation + premium guard (11 tests)
+- `tests/test_tx_hunter.py`: RBF/CPFP calculations + classification (10 tests)
 
 ## Documentation
 

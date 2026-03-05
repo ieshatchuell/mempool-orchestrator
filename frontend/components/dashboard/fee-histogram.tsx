@@ -10,7 +10,12 @@ import {
     Cell,
 } from "recharts"
 import { useRecentBlocks } from "@/hooks/use-recent-blocks"
-import { AlertCircle, BarChart3 } from "lucide-react"
+import { AlertCircle, BarChart3, Info } from "lucide-react"
+import {
+    Tooltip as InfoTooltip,
+    TooltipTrigger,
+    TooltipContent,
+} from "@/components/ui/tooltip"
 
 // ── Types ───────────────────────────────────────────────────────
 
@@ -107,6 +112,16 @@ export function FeeHistogram() {
                     <h2 className="text-sm font-semibold text-foreground">
                         Fee Distribution
                     </h2>
+                    <InfoTooltip>
+                        <TooltipTrigger asChild>
+                            <button className="inline-flex items-center justify-center rounded-full text-muted-foreground/50 hover:text-muted-foreground transition-colors" aria-label="Info about Fee Distribution">
+                                <Info className="h-3.5 w-3.5" />
+                            </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-[240px]">
+                            Fee distribution across 7 percentile bands for the latest confirmed block. The red &quot;Max&quot; bar shows the highest fee paid — useful for detecting fee spikes.
+                        </TooltipContent>
+                    </InfoTooltip>
                 </div>
                 {latestBlock && (
                     <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">

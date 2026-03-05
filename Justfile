@@ -61,10 +61,20 @@ state-writer:
     @echo "{{green}}📦 Starting State Consumer (Kafka → PostgreSQL)...{{reset}}"
     cd backend && uv run python -m src.workers.state_consumer
 
-# Backfill last 144 blocks (~24h) from mempool.space REST API
+# Incremental backfill — fills only missing blocks (non-destructive)
 backfill:
-    @echo "{{green}}📥 Backfilling last 144 blocks (24h)...{{reset}}"
+    @echo "{{green}}📥 Incremental backfill (gap detection)...{{reset}}"
+    cd backend && uv run python -m src.workers.backfill
+
+# Full backfill — DEPRECATED, kept for migration purposes only
+backfill-legacy:
+    @echo "{{red}}⚠️  Legacy backfill (destructive flush + re-insert)...{{reset}}"
     cd backend && uv run python -m scripts.backfill_blocks
+
+# Run the Advisory Engine (tx_hunter — RBF/CPFP scanner)
+hunter:
+    @echo "{{green}}🕵️ Launching Advisory Engine (poll: 60s)...{{reset}}"
+    cd backend && uv run python -m src.workers.tx_hunter
 
 # ==========================================
 # API SERVER (FastAPI)

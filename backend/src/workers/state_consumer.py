@@ -40,7 +40,7 @@ async def _handle_stats(value: bytes) -> None:
             tx_count=info.size,
             total_bytes=info.bytes,
             total_fee_sats=info.total_fee,
-            median_fee=info.mempool_min_fee or 0.0,
+            median_fee=info.median_fee,  # ADR-021: enriched from Block #0
         )
         session.add(snapshot)
         await session.commit()

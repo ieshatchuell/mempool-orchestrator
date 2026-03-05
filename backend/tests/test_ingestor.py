@@ -247,3 +247,73 @@ class TestRouteMessage:
         await route_message(data, mock_producer)
 
         mock_producer.send.assert_not_called()
+
+    # ── ADR-021: Fee Enrichment Tests ────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_enrichment_injects_median_fee(self):
+        """ADR-021: medianFee from mempool-blocks[0] is injected into stats payload."""
+        mock_producer = AsyncMock()
+
+        data = {
+            "mempoolInfo": {
+                "size": 150000,
+                "bytes": 75000000,
+                "usage": 250000000,
+                "totalFee": 1.5,
+                "mempoolMinFee": 0.00001,
+                "minRelayTxFee": 0.00001,
+            },
+            "mempool-blocks": [
+                {
+                    "blockSize": 1500000,
+                    "blockVSize": 999817,
+                    "nTx": 2500,
+                    "totalFees": 50000000,
+                    "medianFee": 8.5,
+                    "feeRange": [1.0, 5.0, 10.0, 15.0, 20.0, 30.0, 50.0],
+                },
+            ],
+        }
+
+        await route_message(data, mock_producer)
+
+        # Stats should be produced
+        stats_calls = [
+            c for c in mock_producer.send.call_args_list
+            if c.kwargs.get("key") == "stats"
+        ]
+        assert len(stats_calls) == 1
+
+        # Verify the serialized payload contains the enriched median_fee
+        payload = json.loads(stats_calls[0].kwargs["value"].decode("utf-8"))
+        assert payload["mempool_info"]["median_fee"] == 8.5
+
+    @pytest.mark.asyncio
+    async def test_enrichment_fallback_empty_blocks(self):
+        """ADR-021: when no mempool-blocks exist, medianFee defaults to 1.0."""
+        mock_producer = AsyncMock()
+
+        data = {
+            "mempoolInfo": {
+                "size": 50000,
+                "bytes": 25000000,
+                "usage": 100000000,
+                "totalFee": 0.5,
+                "mempoolMinFee": 0.00001,
+                "minRelayTxFee": 0.00001,
+            },
+            # No "mempool-blocks" key at all
+        }
+
+        await route_message(data, mock_producer)
+
+        stats_calls = [
+            c for c in mock_producer.send.call_args_list
+            if c.kwargs.get("key") == "stats"
+        ]
+        assert len(stats_calls) == 1
+
+        payload = json.loads(stats_calls[0].kwargs["value"].decode("utf-8"))
+        assert payload["mempool_info"]["median_fee"] == 1.0
+

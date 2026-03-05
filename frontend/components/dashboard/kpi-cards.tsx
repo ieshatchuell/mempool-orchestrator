@@ -9,8 +9,14 @@ import {
   ArrowDown,
   Minus,
   AlertCircle,
+  Info,
 } from "lucide-react"
 import { useMempoolStats } from "@/hooks/use-mempool-stats"
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+} from "@/components/ui/tooltip"
 
 interface KpiCardProps {
   label: string
@@ -20,6 +26,7 @@ interface KpiCardProps {
   deltaDirection: "up" | "down" | "flat"
   icon: React.ReactNode
   iconBg: string
+  tooltip?: string
 }
 
 function KpiCard({
@@ -30,6 +37,7 @@ function KpiCard({
   deltaDirection,
   icon,
   iconBg,
+  tooltip,
 }: KpiCardProps) {
   const DeltaIcon =
     deltaDirection === "up"
@@ -48,9 +56,23 @@ function KpiCard({
   return (
     <div className="flex flex-col gap-3 rounded-2xl border border-border bg-card p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)] dark:shadow-none">
       <div className="flex items-center justify-between">
-        <span className="text-sm font-medium text-muted-foreground">
-          {label}
-        </span>
+        <div className="flex items-center gap-1.5">
+          <span className="text-sm font-medium text-muted-foreground">
+            {label}
+          </span>
+          {tooltip && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button className="inline-flex items-center justify-center rounded-full text-muted-foreground/50 hover:text-muted-foreground transition-colors" aria-label={`Info about ${label}`}>
+                  <Info className="h-3.5 w-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="max-w-[220px]">
+                {tooltip}
+              </TooltipContent>
+            </Tooltip>
+          )}
+        </div>
         <div className={`flex h-8 w-8 items-center justify-center rounded-xl ${iconBg}`}>
           {icon}
         </div>
@@ -140,6 +162,7 @@ export function KpiCards() {
           deltaDirection={getDeltaDirection(data.delta_size_pct)}
           icon={<Database className="h-4 w-4 text-info" />}
           iconBg="bg-info-soft"
+          tooltip="Total size of all unconfirmed transactions waiting to be included in a block. Higher = more congestion."
         />
       </div>
       <div className="animate-fade-in-up stagger-2 hover-lift">
@@ -151,6 +174,7 @@ export function KpiCards() {
           deltaDirection={getDeltaDirection(data.delta_fee_pct)}
           icon={<TrendingDown className="h-4 w-4 text-bitcoin" />}
           iconBg="bg-bitcoin-soft"
+          tooltip="The median fee rate (sat/vB) that transactions in the mempool are paying. This is the 'going rate' to get confirmed."
         />
       </div>
       <div className="animate-fade-in-up stagger-3 hover-lift">
@@ -162,6 +186,7 @@ export function KpiCards() {
           deltaDirection={getDeltaDirection(data.delta_total_fee_pct)}
           icon={<Coins className="h-4 w-4 text-success" />}
           iconBg="bg-success-soft"
+          tooltip="Total BTC in fees across all unconfirmed transactions. Represents the economic incentive for miners."
         />
       </div>
       <div className="animate-fade-in-up stagger-4 hover-lift">
@@ -173,6 +198,7 @@ export function KpiCards() {
           deltaDirection={getDeltaDirection(data.delta_blocks_pct)}
           icon={<Layers className="h-4 w-4 text-muted-foreground" />}
           iconBg="bg-muted"
+          tooltip="Estimated number of blocks needed to confirm all current mempool transactions at current fee rates."
         />
       </div>
     </div>

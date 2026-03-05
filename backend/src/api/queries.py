@@ -10,7 +10,7 @@ from datetime import datetime, timezone, timedelta
 from sqlalchemy import select, func, desc
 
 from src.infrastructure.database.session import async_session
-from src.infrastructure.database.models import BlockRecord, MempoolSnapshot, MempoolBlockProjection
+from src.infrastructure.database.models import BlockRecord, MempoolSnapshot, MempoolBlockProjection, AdvisoryRecord
 
 
 # =============================================================================
@@ -142,8 +142,39 @@ async def query_watchlist_advisories() -> dict:
     Returns:
         Dict matching WatchlistResponse fields.
     """
-    # Stub — advisory pipeline not yet wired
-    return {"advisories": [], "stuck_count": 0, "total_count": 0}
+    async with async_session() as session:
+        stmt = (
+            select(AdvisoryRecord)
+            .order_by(desc(AdvisoryRecord.created_at))
+            .limit(20)
+        )
+        rows = (await session.execute(stmt)).scalars().all()
+
+        if not rows:
+            return {"advisories": [], "stuck_count": 0, "total_count": 0}
+
+        advisories = []
+        for r in rows:
+            advisories.append({
+                "txid": r.txid,
+                "status": "Stuck" if r.action == "BUMP" else "Pending",
+                "current_fee_rate": r.current_fee_rate,
+                "rbf": {
+                    "action": f"Replace with {r.target_fee_rate:.1f} sat/vB",
+                    "cost_sats": r.rbf_fee_sats,
+                } if r.rbf_fee_sats else None,
+                "cpfp": {
+                    "action": f"Child pays to reach {r.target_fee_rate:.1f} sat/vB",
+                    "cost_sats": r.cpfp_fee_sats,
+                } if r.cpfp_fee_sats else None,
+            })
+
+        stuck_count = sum(1 for r in rows if r.action == "BUMP")
+        return {
+            "advisories": advisories,
+            "stuck_count": stuck_count,
+            "total_count": len(rows),
+        }
 
 
 # =============================================================================
@@ -196,12 +227,13 @@ async def query_orchestrator_status() -> dict:
         )
         latest_height = max_height_result.scalar()
 
-    # Fee premium
-    fee_premium_pct = (
-        ((current_median_fee - historical_median_fee) / historical_median_fee) * 100
-        if historical_median_fee > 0
-        else 0.0
-    )
+    # Fee premium — guard against zero values (Premium -100% fix)
+    if current_median_fee <= 0 or historical_median_fee <= 0:
+        fee_premium_pct = 0.0
+    else:
+        fee_premium_pct = (
+            ((current_median_fee - historical_median_fee) / historical_median_fee) * 100
+        )
 
     # Traffic level
     if mempool_size < 10_000:
@@ -210,6 +242,14 @@ async def query_orchestrator_status() -> dict:
         traffic_level = "HIGH"
     else:
         traffic_level = "NORMAL"
+
+    # Real confidence calculation
+    patient_conf, reliable_conf = _compute_confidence(
+        current_fee=current_median_fee,
+        ema_fee=ema_fee,
+        trend=ema_trend,
+        fee_premium_pct=fee_premium_pct,
+    )
 
     return {
         "current_median_fee": current_median_fee,
@@ -222,14 +262,74 @@ async def query_orchestrator_status() -> dict:
         "patient": {
             "action": "WAIT",
             "recommended_fee": max(1, int(ema_fee * 0.8)),
-            "confidence": 0.5,
+            "confidence": patient_conf,
         },
         "reliable": {
             "action": "BROADCAST",
             "recommended_fee": max(1, int(current_median_fee)),
-            "confidence": 0.8,
+            "confidence": reliable_conf,
         },
     }
+
+
+# =============================================================================
+# Confidence calculation (pure math — no DB dependency)
+# =============================================================================
+
+
+def _compute_confidence(
+    current_fee: float,
+    ema_fee: float,
+    trend: str,
+    fee_premium_pct: float,
+) -> tuple[float, float]:
+    """Compute confidence for PATIENT and RELIABLE strategies.
+
+    Logic:
+    - Base confidence starts at 0.5
+    - PATIENT gains confidence when:
+      - EMA trend is FALLING (market cooling → waiting pays off)
+      - fee_premium is HIGH (current >> historical → likely to drop)
+      - EMA and current are diverging (volatility = opportunity to wait)
+    - RELIABLE gains confidence when:
+      - EMA trend is STABLE or RISING (market predictable/heating)
+      - fee_premium is LOW (current ≈ historical → fair price)
+      - EMA and current are converging (low volatility = safe to broadcast)
+
+    Returns:
+        (patient_confidence, reliable_confidence) — both clamped [0.1, 0.95]
+    """
+    # Divergence ratio: |current - ema| / ema
+    divergence = abs(current_fee - ema_fee) / max(ema_fee, 1.0)
+
+    # Patient confidence
+    patient = 0.5
+    if trend == "FALLING":
+        patient += 0.15
+    elif trend == "RISING":
+        patient -= 0.15
+    if fee_premium_pct > 20:
+        patient += 0.15
+    elif fee_premium_pct < -10:
+        patient -= 0.1
+    patient += min(divergence * 0.3, 0.15)  # High divergence = wait opportunity
+
+    # Reliable confidence
+    reliable = 0.5
+    if trend == "STABLE":
+        reliable += 0.15
+    elif trend == "RISING":
+        reliable += 0.1
+    elif trend == "FALLING":
+        reliable -= 0.1
+    if abs(fee_premium_pct) < 10:
+        reliable += 0.15
+    reliable += max(0.15 - divergence * 0.3, 0)  # Low divergence = safe to act
+
+    return (
+        round(max(0.1, min(0.95, patient)), 2),
+        round(max(0.1, min(0.95, reliable)), 2),
+    )
 
 
 # =============================================================================
