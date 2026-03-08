@@ -164,6 +164,7 @@ just test    # 78 tests
 ## Documentation
 
 - [Architecture Guide](docs/architecture.md) - System design and component breakdown
+- [Data Dictionary](docs/data_dictionary.md) - Metric definitions, calculations, and data lineage
 - [Decision Log](docs/decisions.md) - Architectural decisions and project journal
 - [Strategy Roadmap](docs/strategy.md) - Product vision and phased roadmap
 

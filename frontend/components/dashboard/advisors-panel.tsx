@@ -1,6 +1,5 @@
 "use client"
 
-import { useState } from "react"
 import {
   Table,
   TableBody,
@@ -10,14 +9,18 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+} from "@/components/ui/tooltip"
+import { Badge } from "@/components/ui/badge"
+import {
   Lightbulb,
   ExternalLink,
   AlertCircle,
-  Trash2,
-  Plus,
-  Loader2,
+  Info,
 } from "lucide-react"
-import { useWatchlist, useAddWatchlistTx, useRemoveWatchlistTx } from "@/hooks/use-watchlist"
+import { useWatchlist } from "@/hooks/use-watchlist"
 import type { WatchlistAdvisory, AdvisorAction } from "@/lib/types"
 
 // ── Helpers ─────────────────────────────────────────────────────
@@ -107,73 +110,6 @@ function AdvisorsSkeleton() {
   )
 }
 
-// ── TXID Input ──────────────────────────────────────────────────
-
-function TxidInput() {
-  const [txid, setTxid] = useState("")
-  const addMutation = useAddWatchlistTx()
-
-  const isValid = /^[0-9a-fA-F]{64}$/.test(txid)
-
-  function handleAdd() {
-    if (!isValid) return
-    addMutation.mutate(txid.toLowerCase(), {
-      onSuccess: () => setTxid(""),
-    })
-  }
-
-  function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === "Enter") handleAdd()
-  }
-
-  return (
-    <div className="flex items-center gap-2">
-      <input
-        type="text"
-        value={txid}
-        onChange={(e) => setTxid(e.target.value.trim())}
-        onKeyDown={handleKeyDown}
-        placeholder="Paste TXID (64 hex chars)…"
-        className="h-8 w-full max-w-xs rounded-lg border border-border bg-muted/50 px-3 font-mono text-xs text-foreground placeholder:text-muted-foreground/50 focus:border-bitcoin focus:outline-none focus:ring-1 focus:ring-bitcoin/30"
-        maxLength={64}
-      />
-      <button
-        onClick={handleAdd}
-        disabled={!isValid || addMutation.isPending}
-        className="flex h-8 items-center gap-1 rounded-lg bg-foreground px-3 text-xs font-medium text-primary-foreground transition-opacity disabled:opacity-40"
-      >
-        {addMutation.isPending ? (
-          <Loader2 className="h-3 w-3 animate-spin" />
-        ) : (
-          <Plus className="h-3 w-3" />
-        )}
-        Add
-      </button>
-    </div>
-  )
-}
-
-// ── Delete Button ───────────────────────────────────────────────
-
-function DeleteButton({ txid }: { txid: string }) {
-  const removeMutation = useRemoveWatchlistTx()
-
-  return (
-    <button
-      onClick={() => removeMutation.mutate(txid)}
-      disabled={removeMutation.isPending}
-      className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground/40 transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-40"
-      aria-label={`Remove ${txid.slice(0, 8)}…`}
-    >
-      {removeMutation.isPending ? (
-        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-      ) : (
-        <Trash2 className="h-3.5 w-3.5" />
-      )}
-    </button>
-  )
-}
-
 // ── Main Panel ──────────────────────────────────────────────────
 
 export function AdvisorsPanel() {
@@ -201,6 +137,24 @@ export function AdvisorsPanel() {
           <h2 className="text-sm font-semibold text-foreground">
             Fee Advisors
           </h2>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                className="inline-flex items-center justify-center rounded-full text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+                aria-label="Info about Fee Advisors"
+              >
+                <Info className="h-3.5 w-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="max-w-[280px]">
+              Automated scanner that detects transactions stuck in the mempool
+              and calculates optimal RBF (Replace-By-Fee) or CPFP
+              (Child-Pays-For-Parent) top-up fees.
+            </TooltipContent>
+          </Tooltip>
+          <Badge variant="outline" className="text-[10px] uppercase tracking-wider">
+            Live Scanning
+          </Badge>
           <div className="flex items-center gap-2">
             {stuck_count > 0 && (
               <span className="flex items-center gap-1.5 rounded-lg bg-destructive/10 px-2 py-1 text-xs font-medium text-destructive">
@@ -212,13 +166,12 @@ export function AdvisorsPanel() {
             </span>
           </div>
         </div>
-        <TxidInput />
       </div>
 
       {/* Table */}
       {advisories.length === 0 ? (
         <div className="px-5 py-8 text-center text-sm text-muted-foreground">
-          No tracked transactions. Paste a TXID above to start monitoring.
+          No stuck transactions detected. The scanner is monitoring the mempool.
         </div>
       ) : (
         <div className="overflow-x-auto">
@@ -240,7 +193,6 @@ export function AdvisorsPanel() {
                 <TableHead className="text-xs font-medium text-muted-foreground">
                   CPFP (Receiver)
                 </TableHead>
-                <TableHead className="w-10" />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -282,9 +234,6 @@ export function AdvisorsPanel() {
                   </TableCell>
                   <TableCell>
                     <AdvisorBadge type="CPFP" advisor={a.cpfp} />
-                  </TableCell>
-                  <TableCell>
-                    <DeleteButton txid={a.txid} />
                   </TableCell>
                 </TableRow>
               ))}

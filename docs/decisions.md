@@ -1920,3 +1920,60 @@ cd backend && uv run pytest -v  # 78 passed, 0 failed (0.24s)
 - [test_ingestor.py](backend/tests/test_ingestor.py) — Enrichment tests
 - [test_schemas.py](backend/tests/test_schemas.py) — Schema default tests
 
+---
+
+## Session 9: Data Dictionary & Dashboard UX Refactor
+
+- **Date:** 2026-03-08
+- **Status:** ✅ COMPLETED
+- **Phase:** Phase 7 — The Brain & UI Maturity
+
+### Context
+
+The dashboard lacked two things: (1) a single source of truth documenting every metric's lineage, and (2) a visual separation between live mempool data and confirmed blockchain history. Users couldn't distinguish "actionable real-time signals" from "historical settlement records."
+
+### Decisions
+
+**1. Data Dictionary (`docs/data_dictionary.md`):**
+- Created comprehensive metric inventory covering 4 categories: Core KPIs, Market Intelligence, Fee Advisors, Settlement Data.
+- Each metric documents: raw source, DB persistence, type/unit, transformation logic, and polling frequency.
+- Cross-referenced from `docs/architecture.md` (Section 8: Data Governance).
+
+**2. Dashboard Layout Refactor (`frontend/app/page.tsx`):**
+- Split the single-page layout into two conceptual zones:
+  - **"Live Market Dynamics"** — KPI cards, Fee Advisors (scanner mode), Strategy & Trend panel.
+  - **"Settlement History"** — Fee Distribution chart, Block Weight chart, Recent Blocks table.
+- Separator divides the zones visually.
+- Radial gradients provide atmospheric depth: indigo (live/cold) and amber (settlement/warm).
+
+**3. Scanner Mode (`advisors-panel.tsx`):**
+- Removed manual TXID input, Add button, and Delete buttons.
+- Added `Badge` ("Live Scanning") and `Info` tooltip describing the automated scanner role.
+- Empty state message updated to reflect automated monitoring.
+
+**4. Info Tooltips:**
+- `strategy-panel.tsx`: Explains Patient vs Reliable modes and EMA comparison.
+- `transactions-table.tsx`: Describes the immutable ledger and clearing price concept.
+- Fixed `Tooltip` naming collision with recharts by aliasing to `RechartsTooltip`.
+
+### Files Changed
+
+| File | Change |
+|---|---|
+| `docs/data_dictionary.md` | NEW — Full metric lineage |
+| `docs/architecture.md` | Section 8 "Data Governance" with cross-reference |
+| `frontend/app/page.tsx` | Two-zone layout + radial gradients + section headers |
+| `frontend/components/dashboard/advisors-panel.tsx` | Read-only scanner mode + Badge + Tooltip |
+| `frontend/components/dashboard/strategy-panel.tsx` | Info tooltip + RechartsTooltip alias |
+| `frontend/components/dashboard/transactions-table.tsx` | Info tooltip |
+
+### Consequences
+
+**Positive:**
+1. **Data Governance:** Single source of truth for every metric's source, formula, and frequency.
+2. **UX Clarity:** Users can now distinguish "decide & act" (live) from "analyze" (historical).
+3. **Reduced Cognitive Load:** Scanner mode removes manual interaction from a monitoring-focused panel.
+
+**Trade-offs:**
+1. **Advisors panel** is now read-only — manual TXID tracking removed (can be restored if needed).
+2. **Radial gradients** depend on inline styles for reliable rendering over the dark body background.

@@ -13,7 +13,13 @@ import {
   ExternalLink,
   Box,
   AlertCircle,
+  Info,
 } from "lucide-react"
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+} from "@/components/ui/tooltip"
 import { useRecentBlocks } from "@/hooks/use-recent-blocks"
 
 function formatSize(bytes: number): string {
@@ -131,6 +137,21 @@ export function TransactionsTable() {
               Recent Blocks
             </div>
           </div>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                className="inline-flex items-center justify-center rounded-full text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+                aria-label="Info about Recent Blocks"
+              >
+                <Info className="h-3.5 w-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="max-w-[280px]">
+              Immutable ledger of the last 10 confirmed blocks. Shows the
+              realized &apos;clearing price&apos; (median fee) and the exact fee range
+              of transactions included by miners.
+            </TooltipContent>
+          </Tooltip>
         </div>
 
         <div className="flex items-center gap-2.5">

@@ -7,15 +7,21 @@ import {
     TrendingDown,
     Minus,
     AlertCircle,
+    Info,
 } from "lucide-react"
 import {
     LineChart,
     Line,
     XAxis,
     YAxis,
-    Tooltip,
+    Tooltip as RechartsTooltip,
     ResponsiveContainer,
 } from "recharts"
+import {
+    Tooltip,
+    TooltipTrigger,
+    TooltipContent,
+} from "@/components/ui/tooltip"
 import { useOrchestratorStatus } from "@/hooks/use-orchestrator-status"
 import { useRecentBlocks } from "@/hooks/use-recent-blocks"
 import type { StrategyResult } from "@/lib/types"
@@ -109,7 +115,7 @@ function FeeSparkline({ data }: { data: SparklinePoint[] }) {
                     domain={["auto", "auto"]}
                     tickFormatter={(v: number) => v.toFixed(1)}
                 />
-                <Tooltip
+                <RechartsTooltip
                     contentStyle={{
                         backgroundColor: "var(--card)",
                         border: "1px solid var(--border)",
@@ -185,9 +191,26 @@ export function StrategyPanel() {
         <div className="flex flex-col gap-4 rounded-2xl border border-border bg-card p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)] dark:shadow-none animate-fade-in-up">
             {/* Header */}
             <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-foreground">
-                    Strategy &amp; Trend
-                </h2>
+                <div className="flex items-center gap-1.5">
+                    <h2 className="text-sm font-semibold text-foreground">
+                        Strategy &amp; Trend
+                    </h2>
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <button
+                                className="inline-flex items-center justify-center rounded-full text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+                                aria-label="Info about Strategy & Trend"
+                            >
+                                <Info className="h-3.5 w-3.5" />
+                            </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-[280px]">
+                            Real-time logic engine. Compares current fees vs. 100-block
+                            history. &apos;Patient&apos; mode suggests waiting during spikes;
+                            &apos;Reliable&apos; mode prioritizes confirmation speed.
+                        </TooltipContent>
+                    </Tooltip>
+                </div>
                 <div className="flex items-center gap-3">
                     {status && <TrendBadge trend={status.ema_trend} />}
                     {status && (

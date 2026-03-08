@@ -81,6 +81,14 @@ The project addresses the auction market for Bitcoin block space.
 - ~~**[API] Wire Watchlist:** `query_watchlist_advisories()` reads real `AdvisoryRecord` data from PostgreSQL.~~ ✅ Done
 - ~~**[QA] Test Suite:** 74 tests (all green). 27 new tests (backfill: 6, queries: 11, tx_hunter: 10).~~ ✅ Done
 
+#### Session 9: Data Dictionary & UX Refactor
+- ~~**[Docs] Data Dictionary:** Created `docs/data_dictionary.md` — single source of truth for metric definitions, calculations, lineage, and frequencies.~~ ✅ Done
+- ~~**[Docs] Data Governance:** Cross-reference added to `docs/architecture.md` (Section 8).~~ ✅ Done
+- ~~**[UX] Dashboard Layout Refactor:** Split `page.tsx` into two conceptual zones: "Live Market Dynamics" (KPIs, Advisors, Strategy) and "Settlement History" (Charts, Recent Blocks).~~ ✅ Done
+- ~~**[UX] Scanner Mode:** Advisors panel converted to read-only (removed manual TXID input/delete). Added `Badge` ("Live Scanning") + info tooltip.~~ ✅ Done
+- ~~**[UX] Info Tooltips:** Added to Strategy & Trend panel and Recent Blocks table headers.~~ ✅ Done
+- ~~**[UX] Visual Atmosphere:** Indigo radial glow (Live zone) + Amber radial glow (Settlement zone) + pulse indicator on Live header.~~ ✅ Done
+
 ### Phase 8: True Sovereignty — 🦁 Q4 2026 (Endgame)
 - **[Infra]** Deploy Bitcoin Core Node (Pruned Mode, `prune=550`) in Docker.
 - **[Backend]** Switch Ingestor from mempool.space API to Local RPC (`getblocktemplate`).
@@ -88,4 +96,4 @@ The project addresses the auction market for Bitcoin block space.
 
 ---
 **Lead Engineer:** Israel (@ieshatchuell)
-**Status:** Session 8 (The Brain & Logic Hardening) COMPLETED ✅. Phase 8 (True Sovereignty) next.
+**Status:** Session 9 (Data Dictionary & UX Refactor) COMPLETED ✅. Phase 8 (True Sovereignty) next.

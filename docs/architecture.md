@@ -365,3 +365,7 @@ backend/
 - All external data validated with Pydantic V2 `strict=True` at ingestion
 - Invalid payloads logged and dropped — never corrupt downstream storage
 - Monetary values: integer-only (Satoshis) to prevent IEEE 754 precision errors
+
+## 8. Data Governance
+
+> For a detailed breakdown of metric calculations, units, and data lineage, refer to the [Data Dictionary](./data_dictionary.md).
