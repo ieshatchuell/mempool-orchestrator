@@ -6,11 +6,12 @@ Read-only: no INSERT/UPDATE/DELETE operations.
 """
 
 from datetime import datetime, timezone, timedelta
+import math
 
 from sqlalchemy import select, func, desc
 
 from src.infrastructure.database.session import async_session
-from src.infrastructure.database.models import BlockRecord, MempoolSnapshot, MempoolBlockProjection, AdvisoryRecord
+from src.infrastructure.database.models import BlockRecord, MempoolSnapshot, AdvisoryRecord
 
 
 # =============================================================================
@@ -55,6 +56,9 @@ async def query_mempool_stats() -> dict:
         )
         old = (await session.execute(old_stmt)).scalar_one_or_none()
 
+        # Blocks to clear (True Backlog): ceil(total_bytes / 1 vMB)
+        blocks_to_clear = math.ceil(latest.total_bytes / 1_000_000)
+
         delta_size_pct = None
         delta_fee_pct = None
         delta_total_fee_pct = None
@@ -67,14 +71,9 @@ async def query_mempool_stats() -> dict:
                 delta_total_fee_pct = round(((latest.total_fee_sats - old.total_fee_sats) / old.total_fee_sats) * 100, 1)
             if old.median_fee > 0:
                 delta_fee_pct = round(((latest.median_fee - old.median_fee) / old.median_fee) * 100, 1)
-            if old.total_bytes > 0:
-                delta_blocks_pct = round(((latest.total_bytes - old.total_bytes) / old.total_bytes) * 100, 1)
-
-        # Blocks to clear: count of projected mempool blocks
-        blocks_to_clear_result = await session.execute(
-            select(func.count()).select_from(MempoolBlockProjection)
-        )
-        blocks_to_clear = blocks_to_clear_result.scalar() or 0
+            old_btc = math.ceil(old.total_bytes / 1_000_000) if old.total_bytes > 0 else 0
+            if old_btc > 0:
+                delta_blocks_pct = round(((blocks_to_clear - old_btc) / old_btc) * 100, 1)
 
         return {
             "mempool_size": latest.tx_count,

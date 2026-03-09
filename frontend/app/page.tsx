@@ -53,39 +53,30 @@ export default function Page() {
         </section>
 
         {/* ── Separator ── */}
-        <Separator className="relative z-10 my-8" />
+        <Separator className="relative z-10 mt-8" />
 
-        {/* ── Settlement zone — own relative container for amber glow ── */}
-        <div className="relative flex flex-col gap-6">
-          {/* Amber glow — mirrors indigo structure: top-0, same height */}
-          <div
-            className="pointer-events-none absolute inset-x-0 -top-12 z-0 h-[600px]"
-            aria-hidden="true"
-            style={{
-              background:
-                "radial-gradient(ellipse 80% 50% at 50% -5%, rgba(245,158,11,0.15) 0%, rgba(245,158,11,0.05) 40%, transparent 70%)",
-            }}
-          />
+        {/* ── Section 2: Settlement History ── */}
+        <div className="relative">
+          <div className="relative z-10 flex flex-col gap-6">
+            <h2 className="flex items-center gap-2.5 text-xl font-semibold tracking-tight text-foreground">
+              <Box className="h-4.5 w-4.5 text-muted-foreground" />
+              Settlement History
+            </h2>
 
-          {/* ── Section 2: Settlement History ── */}
-          <h2 className="relative z-10 flex items-center gap-2.5 text-xl font-semibold tracking-tight text-foreground">
-            <Box className="h-4.5 w-4.5 text-muted-foreground" />
-            Settlement History
-          </h2>
+            {/* Analytics Row: Fee Distribution + Block Weight */}
+            <section
+              className="grid grid-cols-1 gap-6 lg:grid-cols-2"
+              aria-label="Analytics charts"
+            >
+              <FeeHistogram />
+              <BlockWeightChart />
+            </section>
 
-          {/* Analytics Row: Fee Distribution + Block Weight */}
-          <section
-            className="relative z-10 grid grid-cols-1 gap-6 lg:grid-cols-2"
-            aria-label="Analytics charts"
-          >
-            <FeeHistogram />
-            <BlockWeightChart />
-          </section>
-
-          {/* Recent Blocks Table */}
-          <section className="relative z-10" aria-label="Transaction data">
-            <TransactionsTable />
-          </section>
+            {/* Recent Blocks Table */}
+            <section aria-label="Transaction data">
+              <TransactionsTable />
+            </section>
+          </div>
         </div>
       </main>
 

@@ -89,6 +89,10 @@ The project addresses the auction market for Bitcoin block space.
 - ~~**[UX] Info Tooltips:** Added to Strategy & Trend panel and Recent Blocks table headers.~~ ✅ Done
 - ~~**[UX] Visual Atmosphere:** Indigo radial glow (Live zone) + Amber radial glow (Settlement zone) + pulse indicator on Live header.~~ ✅ Done
 
+#### Session 10: UI Cleanup & True Backlog KPI
+- ~~**[KPI] True Backlog:** `blocks_to_clear` switched from `COUNT(*)` (capped at 8) to `math.ceil(total_bytes / 1MB)` — on-the-fly in `queries.py`, no schema changes.~~ ✅ Done (ADR-022)
+- ~~**[UI] Layout Containment:** Removed amber glow (visual bleed issues). Simplified separator spacing (`mt-8`). Settlement section uses clean layout.~~ ✅ Done (ADR-023)
+
 ### Phase 8: True Sovereignty — 🦁 Q4 2026 (Endgame)
 - **[Infra]** Deploy Bitcoin Core Node (Pruned Mode, `prune=550`) in Docker.
 - **[Backend]** Switch Ingestor from mempool.space API to Local RPC (`getblocktemplate`).
@@ -96,4 +100,4 @@ The project addresses the auction market for Bitcoin block space.
 
 ---
 **Lead Engineer:** Israel (@ieshatchuell)
-**Status:** Session 9 (Data Dictionary & UX Refactor) COMPLETED ✅. Phase 8 (True Sovereignty) next.
+**Status:** Session 10 (UI Cleanup & True Backlog KPI) COMPLETED ✅. Phase 8 (True Sovereignty) next.

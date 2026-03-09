@@ -34,7 +34,7 @@ The Orchestrator monitors the **global auction for censorship-resistant block sp
 | **Mempool Size** | `mempoolInfo.size` | `mempool_snapshots.tx_count` | `INT` (Count) | Direct mapping. Total unconfirmed bids. | **5s** (Polling) |
 | **Median Fee Rate** | `mempool-blocks[0].medianFee` | `mempool_snapshots.median_fee` | `FLOAT` (sat/vB) | **Enrichment:** Extracted from Candidate Block #0 (Clearing price). Fallback: 1.0. | **5s** (Polling) |
 | **Pending Fees** | `mempoolInfo.totalFee` | `mempool_snapshots.total_fee_sats` | `INT` (Satoshis) | **Conversion:** API sends BTC. Converted: `round(BTC * 1e8)`. | **5s** (Polling) |
-| **Blocks to Clear** | `mempool-blocks` list | `mempool_block_projections` | `INT` (Count) | `COUNT(*)` of rows in projection table. | **5s** (Polling) |
+| **Blocks to Clear** | `mempool_snapshots.total_bytes` | Computed on-the-fly | `INT` (Count) | `math.ceil(total_bytes / 1_000_000)`. True Backlog — bypasses API's 8-block cap (ADR-022). | **On-Request** |
 | **Delta (1h)** | `Snapshot` vs `Snapshot -1h` | `mempool_snapshots` | `FLOAT` (%) | `((Current - Old) / Old) * 100`. If `Old=0`, returns `N/A`. | **On-Request** |
 
 ### B. Market Intelligence (The Brain)

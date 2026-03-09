@@ -140,7 +140,7 @@ just sync             # Sync backend dependencies
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/mempool/stats` | Mempool KPIs: size, fees, blocks_to_clear, 1h deltas |
+| `GET` | `/api/mempool/stats` | Mempool KPIs: size, fees, blocks_to_clear (True Backlog), 1h deltas |
 | `GET` | `/api/blocks/recent` | Confirmed blocks with pool_name and fee_range |
 | `GET` | `/api/orchestrator/status` | Market analytics: EMA, trend, real-time confidence (dynamic) |
 | `GET` | `/api/watchlist` | Tracked transactions with RBF/CPFP advisories |

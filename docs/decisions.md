@@ -1977,3 +1977,88 @@ The dashboard lacked two things: (1) a single source of truth documenting every 
 **Trade-offs:**
 1. **Advisors panel** is now read-only — manual TXID tracking removed (can be restored if needed).
 2. **Radial gradients** depend on inline styles for reliable rendering over the dark body background.
+
+---
+
+## ADR-022: True Backlog KPI Strategy
+
+- **Date:** 2026-03-09
+- **Status:** ✅ IMPLEMENTED
+- **Phase:** Session 10 — UI Cleanup & KPI Fix
+
+### Context
+
+The "Blocks to Clear" KPI was calculated as `COUNT(*)` from the `mempool_block_projections` table. This produced a value capped at **8** because the upstream `mempool.space` WebSocket API only returns a maximum of 8 projected blocks in the `mempool-blocks` array. This gave users the false impression that the mempool backlog was always small, even during heavy congestion (e.g., 27 MB mempool ≈ 27 blocks to clear).
+
+### Options Evaluated
+
+| # | Strategy | Accuracy | Persistence | Complexity |
+|---|---|---|---|---|
+| A | COUNT(*) on projection table | ❌ Capped at 8 | DB read | 🟢 Low |
+| B | Persist calculated count in `MempoolSnapshot` | ✅ Accurate | New column | 🔴 High — requires migration |
+| **C** | **On-the-fly calculation** | **✅ Accurate** | **None** | **🟢 Low** |
+
+### Decision
+
+Calculate `blocks_to_clear` at **read time** in `queries.py` using a mathematical formula:
+
+```python
+blocks_to_clear = math.ceil(latest.total_bytes / 1_000_000)
+```
+
+**Rationale:** A standard Bitcoin block holds approximately 1 vMB of transaction data. Dividing the total mempool bytes by 1,000,000 gives the number of blocks needed to clear the entire backlog under ideal conditions.
+
+**Delta calculation:** The same formula is applied to the 1-hour-ago snapshot to compute `delta_blocks_pct`:
+
+```python
+old_btc = math.ceil(old.total_bytes / 1_000_000)
+delta_blocks_pct = ((blocks_to_clear - old_btc) / old_btc) * 100
+```
+
+**What was NOT changed:**
+- `mempool_block_projections` table — still populated by `state_consumer.py` for future analytical use.
+- `models.py` — no schema changes.
+- `state_consumer.py` — no write-path changes.
+
+### Consequences
+
+- **Good:** KPI now shows real backlog (e.g., ~27 blocks for a 27 MB mempool) instead of being capped at ~8.
+- **Good:** Zero migration risk — no DB schema changes, no downtime.
+- **Good:** Delta calculation is now meaningful — compares actual block-equivalent counts.
+- **Trade-off:** The 1 vMB assumption is a simplification. Real blocks vary in weight due to SegWit discount, but this is standard industry practice.
+
+### Related Files
+- [queries.py](backend/src/api/queries.py) — `query_mempool_stats()` with `math.ceil()` calculation
+
+---
+
+## ADR-023: Dashboard Layout Containment
+
+- **Date:** 2026-03-09
+- **Status:** ✅ IMPLEMENTED
+- **Phase:** Session 10 — UI Cleanup & KPI Fix
+
+### Context
+
+Session 9 introduced radial gradient "glows" (indigo for Live Market, amber for Settlement History) to create atmospheric depth. During Session 10, the amber glow proved visually problematic — it bled above the section separator and could not be cleanly clipped without looking artificial.
+
+Multiple approaches were attempted (overflow-hidden, gradient repositioning, contained islands), but none produced a result matching the natural appearance of the indigo glow.
+
+### Decision
+
+**Remove the amber glow entirely.** The Settlement History section uses a clean, glow-free layout while the Live Market section retains its indigo radial gradient.
+
+**Layout structure:**
+- **Live Market Dynamics:** Indigo radial gradient (`rgba(99,102,241)`) as atmospheric backdrop. Content elements use `relative z-10` to sit above the glow.
+- **Separator:** `<Separator className="mt-8" />` — top margin only, no bottom margin (spacing from main's `gap-6` provides symmetry with the title-to-content gap below).
+- **Settlement History:** Clean layout inside a `relative` container. No glow effect.
+
+### Consequences
+
+- **Good:** Clean visual separation between sections — no light bleed.
+- **Good:** Simpler CSS — fewer absolute-positioned elements to maintain.
+- **Trade-off:** Asymmetric atmosphere (indigo glow on top only), but this is intentional — the "live" section benefits from the visual energy, while the "history" section benefits from a calmer, more analytical feel.
+
+### Related Files
+- [page.tsx](frontend/app/page.tsx) — Dashboard layout
+
