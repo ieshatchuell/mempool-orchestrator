@@ -51,20 +51,21 @@ class MempoolSnapshot(Base):
 class MempoolBlockProjection(Base):
     """Projected mempool block from WebSocket mempool-blocks events.
 
-    Snapshot pattern: all rows are replaced (DELETE + INSERT) on each
-    mempool-blocks event. The block_index field preserves ordering
-    (0 = next block, 1 = second block, etc.).
+    UNLOGGED table (ADR-024): no WAL overhead for ephemeral projections.
+    UPSERT pattern: ON CONFLICT (block_index) DO UPDATE replaces the old
+    DELETE + INSERT snapshot, reducing MVCC bloat. Orphan rows are cleaned
+    via DELETE WHERE block_index >= current_batch_length.
     """
 
     __tablename__ = "mempool_block_projections"
+    __table_args__ = {"prefixes": ["UNLOGGED"]}
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    block_index: Mapped[int] = mapped_column(Integer, primary_key=True)
     captured_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
     )
-    block_index: Mapped[int] = mapped_column(Integer, nullable=False)
     block_size: Mapped[int] = mapped_column(Integer, nullable=False)
     block_v_size: Mapped[float] = mapped_column(Float, nullable=False)
     n_tx: Mapped[int] = mapped_column(Integer, nullable=False)

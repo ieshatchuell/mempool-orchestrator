@@ -4,7 +4,7 @@ Consumes from Redpanda topic (mempool-raw) under consumer group
 'mempool-state-writers' and persists state to PostgreSQL tables:
   - stats           → MempoolSnapshot (INSERT, append-only timeseries)
   - confirmed_block → BlockRecord (UPSERT, idempotent by height)
-  - mempool_block   → MempoolBlockProjection (Snapshot: DELETE + INSERT)
+  - mempool_block   → MempoolBlockProjection (UPSERT + orphan cleanup)
 
 Usage:
     cd backend && uv run python -m src.workers.state_consumer
@@ -16,7 +16,7 @@ import json
 from aiokafka import AIOKafkaConsumer
 from loguru import logger
 from pydantic import ValidationError
-from sqlalchemy import delete
+from sqlalchemy import delete, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from src.core.config import settings
@@ -89,11 +89,12 @@ async def _handle_confirmed_block(value: bytes) -> None:
 
 
 async def _handle_mempool_block(value: bytes) -> None:
-    """Materialize projected mempool blocks using Snapshot pattern.
+    """Materialize projected mempool blocks using UPSERT + orphan cleanup.
 
-    Strategy: DELETE all existing projections, then INSERT the new batch.
-    This ensures the table always reflects the latest mempool state.
-    The block_index field preserves ordering (0 = next block).
+    ADR-024: Replaces the old DELETE + INSERT snapshot pattern.
+    - UPSERT: ON CONFLICT (block_index) DO UPDATE for each incoming block.
+    - Orphan cleanup: DELETE WHERE block_index >= len(validated) removes
+      stale rows when the current batch is smaller than the previous one.
     """
     raw_blocks = json.loads(value)
 
@@ -114,12 +115,9 @@ async def _handle_mempool_block(value: bytes) -> None:
         return
 
     async with async_session() as session:
-        # Truncate: remove all existing projections
-        await session.execute(delete(MempoolBlockProjection))
-
-        # Insert new snapshot with block_index from enumeration order
+        # UPSERT each block by block_index
         for idx, block in enumerate(validated):
-            projection = MempoolBlockProjection(
+            stmt = pg_insert(MempoolBlockProjection).values(
                 block_index=idx,
                 block_size=block.block_size,
                 block_v_size=block.block_v_size,
@@ -127,12 +125,30 @@ async def _handle_mempool_block(value: bytes) -> None:
                 total_fees=block.total_fees,
                 median_fee=block.median_fee,
                 fee_range=block.fee_range if block.fee_range else None,
+            ).on_conflict_do_update(
+                index_elements=["block_index"],
+                set_={
+                    "block_size": block.block_size,
+                    "block_v_size": block.block_v_size,
+                    "n_tx": block.n_tx,
+                    "total_fees": block.total_fees,
+                    "median_fee": block.median_fee,
+                    "fee_range": block.fee_range if block.fee_range else None,
+                    "captured_at": func.now(),
+                },
             )
-            session.add(projection)
+            await session.execute(stmt)
+
+        # Orphan cleanup: remove stale rows from a previous larger batch
+        await session.execute(
+            delete(MempoolBlockProjection).where(
+                MempoolBlockProjection.block_index >= len(validated)
+            )
+        )
 
         await session.commit()
 
-    logger.info(f"MempoolBlockProjections: {len(validated)} blocks materialized")
+    logger.info(f"MempoolBlockProjections: {len(validated)} blocks materialized (UPSERT)")
 
 
 async def _handle_message(key: str | None, value: bytes) -> None:

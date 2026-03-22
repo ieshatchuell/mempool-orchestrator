@@ -1,65 +1,25 @@
-"""Radar ingestion worker — real-time mempool stats, projected blocks, and confirmed blocks.
+"""Radar ingestion worker — real-time mempool stats, projected blocks, and block signals.
 
 Connects to Mempool.space WebSocket API and streams validated events to Kafka (Redpanda)
 via the async MempoolProducer.
 
-Confirmed blocks use the Signal & Fetch pattern:
+Block events use the Signal-Only pattern (ADR-024):
 1. WebSocket sends a block signal (hash, height)
-2. We fetch full block data via REST API (GET /api/v1/block/{hash})
-3. Validated ConfirmedBlock is produced to Kafka
+2. Ingestor publishes the signal to 'block-signals' topic immediately
+3. A separate block_fetcher worker handles the REST fetch asynchronously
 """
 
 import asyncio
 import json
 from typing import Any
 
-import httpx
 import websockets
 from loguru import logger
 from pydantic import ValidationError
 
 from src.core.config import settings
 from src.infrastructure.messaging.producer import MempoolProducer
-from src.domain.schemas import MempoolStats, MempoolBlock, ConfirmedBlock
-
-# Shared async HTTP client for block fetches
-_http_client: httpx.AsyncClient | None = None
-
-
-async def _get_http_client() -> httpx.AsyncClient:
-    """Lazy singleton for the async HTTP client."""
-    global _http_client
-    if _http_client is None or _http_client.is_closed:
-        _http_client = httpx.AsyncClient(timeout=30)
-    return _http_client
-
-
-async def fetch_confirmed_block(block_hash: str) -> ConfirmedBlock | None:
-    """Fetch full block data from REST API and validate with Pydantic.
-
-    Signal & Fetch pattern: the WebSocket block event is a signal.
-    We fetch the complete data (with extras/fees) from the REST API.
-
-    Args:
-        block_hash: The block hash from the WebSocket signal.
-
-    Returns:
-        Validated ConfirmedBlock or None if fetch/validation fails.
-    """
-    url = f"{settings.mempool_api_url}/v1/block/{block_hash}"
-    try:
-        client = await _get_http_client()
-        resp = await client.get(url)
-        resp.raise_for_status()
-        data = resp.json()
-        return ConfirmedBlock.model_validate(data)
-    except httpx.HTTPStatusError as e:
-        logger.error(f"REST API error fetching block {block_hash}: {e.response.status_code}")
-    except ValidationError as e:
-        logger.error(f"ConfirmedBlock validation failed for {block_hash}: {e}")
-    except Exception as e:
-        logger.error(f"Unexpected error fetching block {block_hash}: {e}")
-    return None
+from src.domain.schemas import MempoolStats, MempoolBlock
 
 
 async def route_message(data: dict[str, Any], producer: MempoolProducer) -> None:
@@ -128,29 +88,28 @@ async def route_message(data: dict[str, Any], producer: MempoolProducer) -> None
             else:
                 logger.warning(f"Expected list for mempool-blocks, got {type(blocks_data)}")
 
-        # Event Type 3: Confirmed Block (Signal & Fetch pattern)
+        # Event Type 3: Block Signal (ADR-024 — Signal-Only pattern)
+        # Publishes {hash, height} to block-signals topic. The REST fetch
+        # is handled by the separate block_fetcher worker.
         if "block" in data:
             block_signal = data.get("block", {})
             block_hash = block_signal.get("id")
             block_height = block_signal.get("height")
 
             if block_hash:
-                logger.info(f"Block signal received: height={block_height}, hash={block_hash[:16]}...")
+                signal_payload = json.dumps(
+                    {"hash": block_hash, "height": block_height}
+                ).encode("utf-8")
 
-                confirmed = await fetch_confirmed_block(block_hash)
-
-                if confirmed:
-                    await producer.send(
-                        key="confirmed_block",
-                        value=confirmed.model_dump_json().encode("utf-8"),
-                    )
-                    logger.info(
-                        f"ConfirmedBlock: height={confirmed.height}, "
-                        f"median_fee={confirmed.extras.median_fee:.2f} sat/vB, "
-                        f"tx_count={confirmed.tx_count}"
-                    )
-                else:
-                    logger.warning(f"Could not fetch block details for {block_hash[:16]}...")
+                await producer.send(
+                    key="block_signal",
+                    value=signal_payload,
+                    topic=settings.block_signals_topic,
+                )
+                logger.info(
+                    f"Block signal published: height={block_height}, "
+                    f"hash={block_hash[:16]}..."
+                )
 
             handled = True
 
@@ -190,7 +149,8 @@ async def mempool_ingestor() -> None:
 
                     logger.info(
                         f"Subscribed to: mempool-blocks, stats, blocks. "
-                        f"Producing to: {settings.mempool_topic}"
+                        f"Producing to: {settings.mempool_topic}, "
+                        f"{settings.block_signals_topic}"
                     )
 
                     # Message loop
@@ -207,8 +167,6 @@ async def mempool_ingestor() -> None:
                 await asyncio.sleep(retry_delay)
     finally:
         await producer.stop()
-        if _http_client and not _http_client.is_closed:
-            await _http_client.aclose()
 
 
 if __name__ == "__main__":

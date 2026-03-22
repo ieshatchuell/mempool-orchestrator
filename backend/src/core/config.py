@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     # Kafka (Redpanda)
     kafka_bootstrap_servers: str = "localhost:9092"
     mempool_topic: str = "mempool-raw"
+    block_signals_topic: str = "block-signals"
 
     # Mempool.space external APIs
     mempool_ws_url: str = "wss://mempool.space/api/v1/ws"

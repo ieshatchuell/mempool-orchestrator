@@ -31,18 +31,20 @@ class MempoolProducer:
         await self._producer.start()
         logger.info(f"🟢 Kafka producer connected to {settings.kafka_bootstrap_servers}")
 
-    async def send(self, key: str, value: bytes) -> None:
-        """Produce a message to the configured mempool topic.
+    async def send(self, key: str, value: bytes, *, topic: str | None = None) -> None:
+        """Produce a message to a Kafka topic.
 
         Args:
-            key: Message key for partition routing (e.g. 'stats', 'confirmed_block').
+            key: Message key for partition routing (e.g. 'stats', 'block_signal').
             value: Serialized message payload (bytes).
+            topic: Target topic override. Defaults to settings.mempool_topic.
         """
         if self._producer is None:
             raise RuntimeError("Producer not started. Call start() first.")
 
+        target_topic = topic or settings.mempool_topic
         await self._producer.send_and_wait(
-            topic=settings.mempool_topic,
+            topic=target_topic,
             key=key.encode("utf-8"),
             value=value,
         )

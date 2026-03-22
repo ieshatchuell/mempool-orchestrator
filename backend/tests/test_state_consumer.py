@@ -2,9 +2,9 @@
 
 Tests cover:
   - BlockRecord new fields (pool_name, fee_range JSONB)
-  - MempoolBlockProjection instantiation
+  - MempoolBlockProjection instantiation (UNLOGGED, block_index PK)
   - JSONB serialization round-trips
-  - Snapshot pattern (DELETE + INSERT) for mempool_block handler
+  - UPSERT pattern + orphan cleanup in _handle_mempool_block (ADR-024)
 """
 
 import json
@@ -107,7 +107,7 @@ class TestFeeRangeJsonb:
 
 
 # =============================================================================
-# MempoolBlockProjection — Model Instantiation
+# MempoolBlockProjection — Model Instantiation (UNLOGGED, block_index PK)
 # =============================================================================
 
 
@@ -131,18 +131,38 @@ class TestMempoolBlockProjection:
         assert isinstance(projection.fee_range, list)
         assert len(projection.fee_range) == 7
 
+    def test_projection_block_index_is_primary_key(self):
+        """block_index is the primary key (no surrogate id column)."""
+        projection = MempoolBlockProjection(
+            block_index=5,
+            block_size=1000000,
+            block_v_size=700000.0,
+            n_tx=1500,
+            total_fees=800000,
+            median_fee=2.0,
+            fee_range=[0.5, 1.0],
+        )
+        # block_index is the PK — no 'id' attribute
+        assert projection.block_index == 5
+        assert not hasattr(projection, "id") or projection.__class__.__name__ != "id"
+
+    def test_projection_table_is_unlogged(self):
+        """The table prefixes include UNLOGGED."""
+        assert "prefixes" in MempoolBlockProjection.__table_args__
+        assert "UNLOGGED" in MempoolBlockProjection.__table_args__["prefixes"]
+
 
 # =============================================================================
-# Snapshot Pattern — _handle_mempool_block Logic
+# UPSERT Pattern — _handle_mempool_block Logic (ADR-024)
 # =============================================================================
 
 
-class TestHandleMempoolBlockSnapshot:
-    """Verify the Snapshot (DELETE + INSERT) pattern in _handle_mempool_block."""
+class TestHandleMempoolBlockUpsert:
+    """Verify the UPSERT + orphan cleanup pattern in _handle_mempool_block."""
 
     @pytest.mark.asyncio
-    async def test_handle_mempool_block_snapshot(self):
-        """_handle_mempool_block deletes old projections and inserts new ones."""
+    async def test_handle_mempool_block_upsert(self):
+        """_handle_mempool_block executes UPSERT statements + orphan cleanup."""
         from src.workers.state_consumer import _handle_mempool_block
 
         # Build a valid mempool_block Kafka payload (JSON array)
@@ -174,18 +194,16 @@ class TestHandleMempoolBlockSnapshot:
         with patch("src.workers.state_consumer.async_session", return_value=mock_ctx):
             await _handle_mempool_block(blocks_payload)
 
-        # Verify DELETE was called (truncate old projections)
-        mock_session.execute.assert_called()
+        # Verify session.execute was called:
+        # 2 UPSERTs (one per block) + 1 orphan cleanup DELETE = 3 calls
+        assert mock_session.execute.call_count == 3
 
-        # Verify session.add was called twice (2 blocks)
-        assert mock_session.add.call_count == 2
-
-        # Verify commit was called
+        # Verify commit was called once
         mock_session.commit.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_handle_mempool_block_block_index(self):
-        """Block index matches enumeration order (0, 1, 2...)."""
+    async def test_handle_mempool_block_no_session_add(self):
+        """UPSERT pattern uses session.execute, NOT session.add."""
         from src.workers.state_consumer import _handle_mempool_block
 
         blocks_payload = json.dumps([
@@ -197,28 +215,9 @@ class TestHandleMempoolBlockSnapshot:
                 "medianFee": 5.0,
                 "feeRange": [1.0, 5.0],
             },
-            {
-                "blockSize": 1400000,
-                "blockVSize": 950000.0,
-                "nTx": 2500,
-                "totalFees": 1800000,
-                "medianFee": 4.0,
-                "feeRange": [0.5, 3.0],
-            },
-            {
-                "blockSize": 1300000,
-                "blockVSize": 900000.0,
-                "nTx": 2000,
-                "totalFees": 1500000,
-                "medianFee": 3.0,
-                "feeRange": [0.1, 2.0],
-            },
         ]).encode("utf-8")
 
-        added_projections: list[MempoolBlockProjection] = []
-
         mock_session = AsyncMock()
-        mock_session.add = MagicMock(side_effect=lambda p: added_projections.append(p))
         mock_ctx = AsyncMock()
         mock_ctx.__aenter__ = AsyncMock(return_value=mock_session)
         mock_ctx.__aexit__ = AsyncMock(return_value=False)
@@ -226,12 +225,51 @@ class TestHandleMempoolBlockSnapshot:
         with patch("src.workers.state_consumer.async_session", return_value=mock_ctx):
             await _handle_mempool_block(blocks_payload)
 
-        # Verify block_index matches enumeration order
-        assert len(added_projections) == 3
-        assert added_projections[0].block_index == 0
-        assert added_projections[1].block_index == 1
-        assert added_projections[2].block_index == 2
+        # session.add should NOT be called (we use execute with pg_insert)
+        mock_session.add.assert_not_called()
 
-        # Verify data integrity
-        assert added_projections[0].block_v_size == 997892.5
-        assert added_projections[2].n_tx == 2000
+    @pytest.mark.asyncio
+    async def test_orphan_cleanup_included(self):
+        """The last execute call is a DELETE for orphan cleanup."""
+        from src.workers.state_consumer import _handle_mempool_block
+
+        blocks_payload = json.dumps([
+            {
+                "blockSize": 1500000,
+                "blockVSize": 997892.5,
+                "nTx": 3000,
+                "totalFees": 2000000,
+                "medianFee": 5.0,
+                "feeRange": [1.0, 5.0],
+            },
+        ]).encode("utf-8")
+
+        mock_session = AsyncMock()
+        mock_ctx = AsyncMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("src.workers.state_consumer.async_session", return_value=mock_ctx):
+            await _handle_mempool_block(blocks_payload)
+
+        # 1 UPSERT + 1 orphan cleanup DELETE = 2 execute calls
+        assert mock_session.execute.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_empty_payload_skipped(self):
+        """An empty validated list results in no DB operations."""
+        from src.workers.state_consumer import _handle_mempool_block
+
+        blocks_payload = json.dumps([]).encode("utf-8")
+
+        mock_session = AsyncMock()
+        mock_ctx = AsyncMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("src.workers.state_consumer.async_session", return_value=mock_ctx):
+            await _handle_mempool_block(blocks_payload)
+
+        # No execute calls — empty list skips the async with block
+        mock_session.execute.assert_not_called()
+        mock_session.commit.assert_not_called()

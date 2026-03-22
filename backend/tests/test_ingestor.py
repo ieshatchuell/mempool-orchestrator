@@ -3,16 +3,16 @@
 Tests verify the route_message function correctly routes different event types
 to Kafka with proper validation using mocked async producers.
 
-Updated for Phase 5 EDA: imports from src.workers.ingestor,
-producer uses async .send() instead of sync .produce().
+Updated for ADR-024: Block events now produce signals to block-signals topic
+instead of performing REST fetches inline.
 """
 
-import asyncio
 import json
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
+from src.core.config import settings
 from src.workers.ingestor import route_message
 
 
@@ -93,28 +93,9 @@ class TestRouteMessage:
         mock_producer.send.assert_not_called()
 
     @pytest.mark.asyncio
-    @patch("src.workers.ingestor.fetch_confirmed_block")
-    async def test_route_confirmed_block(self, mock_fetch):
-        """Verify confirmed block signals trigger Signal & Fetch and produce to Kafka."""
+    async def test_block_signal_published_to_block_signals(self):
+        """ADR-024: Block events produce a signal to block-signals topic."""
         mock_producer = AsyncMock()
-
-        # Mock the REST API fetch to return a valid ConfirmedBlock
-        from src.domain.schemas import ConfirmedBlock, ConfirmedBlockExtras
-        mock_block = ConfirmedBlock(
-            id="00000000000000000001abcdef",
-            height=800000,
-            timestamp=1706500000,
-            size=1500000,
-            tx_count=3000,
-            extras=ConfirmedBlockExtras(
-                virtual_size=997892.5,
-                total_fees=2036508,
-                median_fee=5.0,
-                fee_range=[1.0, 2.0, 5.0, 10.0],
-                pool={"name": "Foundry USA"}
-            )
-        )
-        mock_fetch.return_value = mock_block
 
         data = {
             "block": {
@@ -129,35 +110,32 @@ class TestRouteMessage:
 
         await route_message(data, mock_producer)
 
-        # Assert fetch was called with the block hash
-        mock_fetch.assert_called_once_with("00000000000000000001abcdef")
-
-        # Assert producer.send was called with confirmed_block key
+        # Assert producer.send was called once with block_signal key
         assert mock_producer.send.call_count == 1
         call_kwargs = mock_producer.send.call_args.kwargs
-        assert call_kwargs["key"] == "confirmed_block"
+        assert call_kwargs["key"] == "block_signal"
+        assert call_kwargs["topic"] == settings.block_signals_topic
+
+        # Verify payload contains hash and height
+        payload = json.loads(call_kwargs["value"].decode("utf-8"))
+        assert payload["hash"] == "00000000000000000001abcdef"
+        assert payload["height"] == 800000
 
     @pytest.mark.asyncio
-    @patch("src.workers.ingestor.fetch_confirmed_block")
-    async def test_confirmed_block_fetch_failure(self, mock_fetch):
-        """Verify that if REST fetch fails, no message is produced."""
+    async def test_block_signal_missing_hash(self):
+        """Block signal without hash does not produce to Kafka."""
         mock_producer = AsyncMock()
-        mock_fetch.return_value = None  # Fetch failed
 
         data = {
             "block": {
-                "id": "00000000000000000001234567890abcdef",
                 "height": 800000,
                 "timestamp": 1706500000,
-                "tx_count": 3000,
-                "size": 1500000,
-                "weight": 4000000
             }
         }
 
         await route_message(data, mock_producer)
 
-        mock_fetch.assert_called_once()
+        # No hash → no signal produced, but handled flag is True (no unknown warning)
         mock_producer.send.assert_not_called()
 
     @pytest.mark.asyncio
@@ -316,4 +294,3 @@ class TestRouteMessage:
 
         payload = json.loads(stats_calls[0].kwargs["value"].decode("utf-8"))
         assert payload["mempool_info"]["median_fee"] == 1.0
-
