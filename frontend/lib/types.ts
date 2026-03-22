@@ -40,7 +40,7 @@ export interface RecentBlocks {
 // ── /api/watchlist ──────────────────────────────────────────────
 
 export interface AdvisorAction {
-  action: string;
+  target_fee_rate: number;
   cost_sats: number | null;
 }
 

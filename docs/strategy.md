@@ -20,7 +20,7 @@ The project addresses the auction market for Bitcoin block space.
 
 ### Phase 1: Foundation — ✅ COMPLETED
 - **Architecture:** Decoupled Monorepo & Hybrid Infrastructure (Local + Docker).
-- **AI Strategy:** Neuro-Symbolic Brain (Python Logic + Llama 3.2 Narrative).
+- **AI Strategy:** Deterministic Python logic (Llama 3.2 removed — ADR-016/019).
 - **Data Isolation:** Strict RO/RW separation with Docker volume permissions.
 
 ### Phase 2: Financial Hardening & Validation — ✅ COMPLETED
@@ -33,7 +33,7 @@ The project addresses the auction market for Bitcoin block space.
 - ~~**[UI] Strategy Simulator:** Interactive dashboard overlay.~~ ✅ Done (ADR-011)
 
 ### Phase 3: The Prescriptive Operator — ✅ COMPLETED
-- ~~**[Core] Dual-Mode Strategy:** PATIENT vs RELIABLE.~~ ✅ Done (ADR-012)
+- ~~**[Core] Dual-Mode Strategy:** PATIENT vs FAST (renamed from RELIABLE — Session 11).~~ ✅ Done (ADR-012)
 - ~~**[Signal] EMA Hybrid:** Integrate EMA as secondary signal.~~ ✅ Done (ADR-012)
 - ~~**[Feature] Watchlist Module:** Track specific TXIDs.~~ ✅ Done (ADR-013)
 - ~~**[Feature] RBF Advisor (Sender Strategy).~~ ✅ Done (ADR-014)
@@ -41,7 +41,7 @@ The project addresses the auction market for Bitcoin block space.
 
 ### Phase 4: UI Migration — ✅ COMPLETED
 - ~~**[UI]** Migrate Streamlit to React/Next.js.~~ ✅ Done
-- **[Pivot] Automated Showcase:** Read-only showcase of "interesting" transactions. (ADR-015)
+- ~~**[Pivot] Automated Showcase:** Read-only showcase of "interesting" transactions. (ADR-015)~~ ✅ Done
 
 ### Phase 5: EDA Migration — ✅ COMPLETED (ADR-016)
 - ~~**[Infra] Stack Migration:** DuckDB+Redis → PostgreSQL.~~ ✅ Done
@@ -56,7 +56,7 @@ The project addresses the auction market for Bitcoin block space.
 - ~~**[Governance] Git Workflow:** Branching rule enforced in agent persona.~~ ✅ Done
 - ~~**[Infra] pgAdmin:** Database viewer service with env var interpolation.~~ ✅ Done
 - ~~**[DB] Schema Enrichment:** `pool_name` (VARCHAR) + `fee_range` (JSONB) on blocks. New `mempool_block_projections` table.~~ ✅ Done
-- ~~**[Consumer] Snapshot Pattern:** `mempool_block` events materialized via DELETE + INSERT.~~ ✅ Done
+- ~~**[Consumer] UPSERT Pattern:** `mempool_block` events materialized via UPSERT + orphan cleanup on UNLOGGED table.~~ ✅ Done
 - ~~**[API] Enrich Responses:** Real `pool_name`, `fee_range`, `blocks_to_clear`.~~ ✅ Done
 - ~~**[QA] Test Suite:** 47 tests (all green). Legacy tests fixed.~~ ✅ Done
 - ~~**[Cleanup] Logic Migration:** Orchestrator Docker container removed. Market analytics (EMA, Trend, Strategy) migrated to inline `query_orchestrator_status()` in API layer.~~ ✅ Done
@@ -93,6 +93,15 @@ The project addresses the auction market for Bitcoin block space.
 - ~~**[KPI] True Backlog:** `blocks_to_clear` switched from `COUNT(*)` (capped at 8) to `math.ceil(total_bytes / 1MB)` — on-the-fly in `queries.py`, no schema changes.~~ ✅ Done (ADR-022)
 - ~~**[UI] Layout Containment:** Removed amber glow (visual bleed issues). Simplified separator spacing (`mt-8`). Settlement section uses clean layout.~~ ✅ Done (ADR-023)
 
+#### Session 11: i18n Integration & UX Friction Fixes
+- ~~**[i18n] Full Integration:** EN/ES toggle, all 9 dashboard components wired to `useTranslations()`.~~ ✅ Done
+- ~~**[UX] Reliable → Fast Rename:** Semantic rename across dictionaries, strategy-panel, advisors-panel, status-bar.~~ ✅ Done
+- ~~**[UX] Mining Pool Links:** PoolBadge clickable → `mempool.space/mining/pool/{name}`. Unknown pools hidden.~~ ✅ Done
+- ~~**[Backend] Advisory i18n:** Backend sends `target_fee_rate` (structured) instead of English strings. Frontend formats with templates.~~ ✅ Done
+- ~~**[Backend] KPI Delta Gate:** 30-minute minimum gap for historical deltas — returns N/A when data is insufficient.~~ ✅ Done
+- ~~**[UX] Dynamic Value Translations:** Footer actions (WAIT/BROADCAST), traffic levels, EMA trends all translated.~~ ✅ Done
+- ~~**[Docs] Architecture Overhaul:** 14-point remediation of `architecture.md` — all diagrams and tables synchronized.~~ ✅ Done
+
 ### Phase 8: True Sovereignty — 🦁 Q4 2026 (Endgame)
 - **[Infra]** Deploy Bitcoin Core Node (Pruned Mode, `prune=550`) in Docker.
 - **[Backend]** Switch Ingestor from mempool.space API to Local RPC (`getblocktemplate`).
@@ -100,4 +109,4 @@ The project addresses the auction market for Bitcoin block space.
 
 ---
 **Lead Engineer:** Israel (@ieshatchuell)
-**Status:** Session 10 (UI Cleanup & True Backlog KPI) COMPLETED ✅. Phase 8 (True Sovereignty) next.
+**Status:** Session 11 (i18n Integration & UX Friction Fixes) COMPLETED ✅. Phase 8 (True Sovereignty) next.

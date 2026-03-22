@@ -6,8 +6,8 @@ import { AdvisorsPanel } from "@/components/dashboard/advisors-panel"
 import { TransactionsTable } from "@/components/dashboard/transactions-table"
 import { StrategyPanel } from "@/components/dashboard/strategy-panel"
 import { StatusBar } from "@/components/dashboard/status-bar"
+import { SectionHeaders } from "@/components/dashboard/section-headers"
 import { Separator } from "@/components/ui/separator"
-import { Box } from "lucide-react"
 
 export default function Page() {
   return (
@@ -26,13 +26,7 @@ export default function Page() {
         />
 
         {/* ── Section 1: Live Market Dynamics ── */}
-        <h2 className="relative z-10 flex items-center gap-2.5 text-xl font-semibold tracking-tight text-foreground">
-          <span className="relative flex h-2.5 w-2.5">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
-          </span>
-          Live Market Dynamics
-        </h2>
+        <SectionHeaders variant="live" />
 
         {/* KPI Row */}
         <section className="relative z-10" aria-label="Key metrics">
@@ -58,10 +52,7 @@ export default function Page() {
         {/* ── Section 2: Settlement History ── */}
         <div className="relative">
           <div className="relative z-10 flex flex-col gap-6">
-            <h2 className="flex items-center gap-2.5 text-xl font-semibold tracking-tight text-foreground">
-              <Box className="h-4.5 w-4.5 text-muted-foreground" />
-              Settlement History
-            </h2>
+            <SectionHeaders variant="settlement" />
 
             {/* Analytics Row: Fee Distribution + Block Weight */}
             <section

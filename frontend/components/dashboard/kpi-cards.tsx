@@ -17,6 +17,7 @@ import {
   TooltipTrigger,
   TooltipContent,
 } from "@/components/ui/tooltip"
+import { useTranslations } from "@/hooks/use-translations"
 
 interface KpiCardProps {
   label: string
@@ -27,6 +28,7 @@ interface KpiCardProps {
   icon: React.ReactNode
   iconBg: string
   tooltip?: string
+  vsLabel: string
 }
 
 function KpiCard({
@@ -38,6 +40,7 @@ function KpiCard({
   icon,
   iconBg,
   tooltip,
+  vsLabel,
 }: KpiCardProps) {
   const DeltaIcon =
     deltaDirection === "up"
@@ -88,7 +91,7 @@ function KpiCard({
           <DeltaIcon className="h-3.5 w-3.5" />
           <span className="text-xs font-medium">{delta}</span>
         </div>
-        <span className="text-xs text-muted-foreground">vs 1h ago</span>
+        <span className="text-xs text-muted-foreground">{vsLabel}</span>
       </div>
     </div>
   )
@@ -130,12 +133,13 @@ function formatDelta(pct: number | null): string {
 
 export function KpiCards() {
   const { data, isError } = useMempoolStats()
+  const { t } = useTranslations()
 
   if (isError) {
     return (
       <div className="flex items-center gap-2 rounded-2xl border border-destructive/30 bg-destructive/5 p-5 text-sm text-destructive">
         <AlertCircle className="h-4 w-4" />
-        <span>Unable to load mempool stats</span>
+        <span>{t.kpi.unableToLoad}</span>
       </div>
     )
   }
@@ -155,50 +159,54 @@ export function KpiCards() {
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
       <div className="animate-fade-in-up stagger-1 hover-lift">
         <KpiCard
-          label="Mempool Size"
+          label={t.kpi.mempoolSize}
           value={formatBytes(data.mempool_bytes)}
           unit="MB"
           delta={formatDelta(data.delta_size_pct)}
           deltaDirection={getDeltaDirection(data.delta_size_pct)}
           icon={<Database className="h-4 w-4 text-info" />}
           iconBg="bg-info-soft"
-          tooltip="Total size of all unconfirmed transactions waiting to be included in a block. Higher = more congestion."
+          tooltip={t.kpi.tooltipMempoolSize}
+          vsLabel={t.kpi.vsOneHourAgo}
         />
       </div>
       <div className="animate-fade-in-up stagger-2 hover-lift">
         <KpiCard
-          label="Median Fee Rate"
+          label={t.kpi.medianFeeRate}
           value={data.median_fee.toFixed(1)}
           unit="sat/vB"
           delta={formatDelta(data.delta_fee_pct)}
           deltaDirection={getDeltaDirection(data.delta_fee_pct)}
           icon={<TrendingDown className="h-4 w-4 text-bitcoin" />}
           iconBg="bg-bitcoin-soft"
-          tooltip="The median fee rate (sat/vB) that transactions in the mempool are paying. This is the 'going rate' to get confirmed."
+          tooltip={t.kpi.tooltipMedianFee}
+          vsLabel={t.kpi.vsOneHourAgo}
         />
       </div>
       <div className="animate-fade-in-up stagger-3 hover-lift">
         <KpiCard
-          label="Pending Fees"
+          label={t.kpi.pendingFees}
           value={formatBtc(data.total_fee_sats)}
           unit="BTC"
           delta={formatDelta(data.delta_total_fee_pct)}
           deltaDirection={getDeltaDirection(data.delta_total_fee_pct)}
           icon={<Coins className="h-4 w-4 text-success" />}
           iconBg="bg-success-soft"
-          tooltip="Total BTC in fees across all unconfirmed transactions. Represents the economic incentive for miners."
+          tooltip={t.kpi.tooltipPendingFees}
+          vsLabel={t.kpi.vsOneHourAgo}
         />
       </div>
       <div className="animate-fade-in-up stagger-4 hover-lift">
         <KpiCard
-          label="Blocks to Clear"
+          label={t.kpi.blocksToClear}
           value={`~${data.blocks_to_clear}`}
           unit="blocks"
           delta={formatDelta(data.delta_blocks_pct)}
           deltaDirection={getDeltaDirection(data.delta_blocks_pct)}
           icon={<Layers className="h-4 w-4 text-muted-foreground" />}
           iconBg="bg-muted"
-          tooltip="Estimated number of blocks needed to confirm all current mempool transactions at current fee rates."
+          tooltip={t.kpi.tooltipBlocksToClear}
+          vsLabel={t.kpi.vsOneHourAgo}
         />
       </div>
     </div>

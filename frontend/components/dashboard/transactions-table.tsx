@@ -21,6 +21,7 @@ import {
   TooltipContent,
 } from "@/components/ui/tooltip"
 import { useRecentBlocks } from "@/hooks/use-recent-blocks"
+import { useTranslations } from "@/hooks/use-translations"
 
 function formatSize(bytes: number): string {
   if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(2)} MB`
@@ -69,8 +70,8 @@ const POOL_COLORS: Record<string, string> = {
   "SpiderPool": "bg-cyan-500",
 }
 
-function PoolBadge({ name }: { name: string | null }) {
-  const poolName = name ?? "Unknown"
+function PoolBadge({ name, unknownLabel }: { name: string | null; unknownLabel: string }) {
+  const poolName = name ?? unknownLabel
   const dotColor = POOL_COLORS[poolName] ?? "bg-muted-foreground/40"
 
   return (
@@ -112,12 +113,13 @@ function BlocksTableSkeleton() {
 
 export function TransactionsTable() {
   const { data, isError } = useRecentBlocks()
+  const { t } = useTranslations()
 
   if (isError) {
     return (
       <div className="flex items-center gap-2 rounded-2xl border border-destructive/30 bg-destructive/5 p-5 text-sm text-destructive">
         <AlertCircle className="h-4 w-4" />
-        <span>Unable to load recent blocks</span>
+        <span>{t.transactions.unableToLoad}</span>
       </div>
     )
   }
@@ -134,42 +136,40 @@ export function TransactionsTable() {
           <div className="flex overflow-hidden rounded-xl border border-border bg-muted p-0.5">
             <div className="flex items-center gap-1.5 rounded-lg bg-card px-4 py-1.5 text-sm font-medium text-foreground shadow-sm">
               <Box className="h-3.5 w-3.5" />
-              Recent Blocks
+              {t.transactions.recentBlocks}
             </div>
           </div>
           <Tooltip>
             <TooltipTrigger asChild>
               <button
                 className="inline-flex items-center justify-center rounded-full text-muted-foreground/50 hover:text-muted-foreground transition-colors"
-                aria-label="Info about Recent Blocks"
+                aria-label={`Info about ${t.transactions.recentBlocks}`}
               >
                 <Info className="h-3.5 w-3.5" />
               </button>
             </TooltipTrigger>
             <TooltipContent side="top" className="max-w-[280px]">
-              Immutable ledger of the last 10 confirmed blocks. Shows the
-              realized &apos;clearing price&apos; (median fee) and the exact fee range
-              of transactions included by miners.
+              {t.transactions.tooltipRecentBlocks}
             </TooltipContent>
           </Tooltip>
         </div>
 
         <div className="flex items-center gap-2.5">
           <span className="text-xs text-muted-foreground">
-            {blocks.length} blocks
+            {blocks.length} {t.transactions.blocks}
           </span>
           <span className="relative flex h-2 w-2">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-75" />
             <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
           </span>
-          <span className="text-xs font-medium text-success">Live</span>
+          <span className="text-xs font-medium text-success">{t.transactions.live}</span>
         </div>
       </div>
 
       {/* Blocks Table */}
       {blocks.length === 0 ? (
         <div className="px-5 py-8 text-center text-sm text-muted-foreground">
-          No confirmed blocks yet. Waiting for data...
+          {t.transactions.noBlocks}
         </div>
       ) : (
         <div className="overflow-x-auto">
@@ -177,28 +177,28 @@ export function TransactionsTable() {
             <TableHeader>
               <TableRow className="border-border hover:bg-transparent">
                 <TableHead className="text-xs font-medium text-muted-foreground">
-                  Height
+                  {t.transactions.colHeight}
                 </TableHead>
                 <TableHead className="text-xs font-medium text-muted-foreground">
-                  Time
+                  {t.transactions.colTime}
                 </TableHead>
                 <TableHead className="text-right text-xs font-medium text-muted-foreground">
-                  Transactions
+                  {t.transactions.colTransactions}
                 </TableHead>
                 <TableHead className="text-right text-xs font-medium text-muted-foreground">
-                  Size
+                  {t.transactions.colSize}
                 </TableHead>
                 <TableHead className="text-right text-xs font-medium text-muted-foreground">
-                  Fee Range
+                  {t.transactions.colFeeRange}
                 </TableHead>
                 <TableHead className="text-right text-xs font-medium text-muted-foreground">
-                  Median Fee
+                  {t.transactions.colMedianFee}
                 </TableHead>
                 <TableHead className="text-right text-xs font-medium text-muted-foreground">
-                  Total Fees
+                  {t.transactions.colTotalFees}
                 </TableHead>
                 <TableHead className="text-xs font-medium text-muted-foreground">
-                  Miner
+                  {t.transactions.colMiner}
                 </TableHead>
               </TableRow>
             </TableHeader>
@@ -216,7 +216,7 @@ export function TransactionsTable() {
                       </span>
                       {i === 0 && (
                         <span className="rounded-full bg-success-soft px-2 py-0.5 text-[10px] font-semibold text-success">
-                          Latest
+                          {t.transactions.latest}
                         </span>
                       )}
                     </div>
@@ -254,8 +254,19 @@ export function TransactionsTable() {
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1.5">
-                      <PoolBadge name={block.pool_name} />
-                      <ExternalLink className="h-3.5 w-3.5 text-muted-foreground/40 transition-colors hover:text-muted-foreground" />
+                      {block.pool_name ? (
+                        <a
+                          href={`https://mempool.space/mining/pool/${block.pool_name.replace(/\s+/g, '')}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1.5 transition-colors hover:text-foreground"
+                        >
+                          <PoolBadge name={block.pool_name} unknownLabel={t.blockWeight.unknown} />
+                          <ExternalLink className="h-3.5 w-3.5 text-muted-foreground/40 transition-colors hover:text-muted-foreground" />
+                        </a>
+                      ) : (
+                        <PoolBadge name={null} unknownLabel={t.blockWeight.unknown} />
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>

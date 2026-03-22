@@ -61,6 +61,11 @@ state-writer:
     @echo "{{green}}📦 Starting State Consumer (Kafka → PostgreSQL)...{{reset}}"
     cd backend && uv run python -m src.workers.state_consumer
 
+# Run the Block Fetcher (block-signals → REST → mempool-raw)
+fetcher:
+    @echo "{{green}}🔗 Launching Block Fetcher (block-signals → REST → mempool-raw)...{{reset}}"
+    cd backend && uv run python -m src.workers.block_fetcher
+
 # Incremental backfill — fills only missing blocks (non-destructive)
 backfill:
     @echo "{{green}}📥 Incremental backfill (gap detection)...{{reset}}"

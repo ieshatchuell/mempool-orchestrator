@@ -2062,3 +2062,86 @@ Multiple approaches were attempted (overflow-hidden, gradient repositioning, con
 ### Related Files
 - [page.tsx](frontend/app/page.tsx) — Dashboard layout
 
+---
+
+## ADR-024: Signal & Fetch Decoupling
+
+- **Date:** 2026-03-22
+- **Status:** ✅ IMPLEMENTED
+- **Phase:** Architecture Overhaul
+
+### Context
+
+The `ingestor.py` worker was originally handling both the WebSocket connection (Signal) and the `GET /v1/block/{hash}` REST API call (Fetch) inline. If the REST API suffered high latency or rate limits, the `ingestor` would stall, potentially dropping live WebSocket messages (stats and projected blocks).
+
+### Decision
+
+**Decouple block ingestion using the Signal & Fetch pattern.**
+
+1. **Signal:** The `ingestor.py` (Radar) now merely listens for the `block` event on the WebSocket, immediately publishing a lightweight `{hash, height}` dictionary to a new Kafka topic (`block-signals`).
+2. **Fetch:** A dedicated new worker, `block_fetcher.py`, subscribes to `block-signals`. When it receives a signal, it acts independently: making the REST call, validating the payload, and producing the full `confirmed_block` to the `mempool-raw` topic.
+
+### Consequences
+
+- **Good:** The WebSocket ingestor never blocks on REST I/O.
+- **Good:** The `block_fetcher` can independently retry, rate-limit, or backoff without affecting real-time dashboard metrics (stats).
+- **Good:** Clearer SRP (Single Responsibility Principle) in workers.
+
+---
+
+## ADR-025: Ephemeral Projections (UNLOGGED + UPSERT)
+
+- **Date:** 2026-03-22
+- **Status:** ✅ IMPLEMENTED
+- **Phase:** Architecture Overhaul
+
+### Context
+
+The `mempool_block_projections` table stores candidate blocks (templates). This data is updated frequently (every 5-10 seconds) because the mempool order book changes rapidly. The original proposed pattern was a destructive `DELETE` all entries followed by a bulk `INSERT`. This caused significant WAL (Write-Ahead Log) bloat and potential locking contention.
+
+### Decision
+
+**Use an UNLOGGED table with an UPSERT pattern.**
+
+1. **UNLOGGED:** The `mempool_block_projections` table is created with `__table_args__ = {"prefixes": ["UNLOGGED"]}`. This disables WAL streaming for this table, skipping disk syncs to drastically improve performance since candidate block data is strictly ephemeral and doesn't need crash recovery.
+2. **UPSERT:** Replaced the `DELETE + INSERT` logic with an `INSERT ... ON CONFLICT (block_index) DO UPDATE` pattern.
+3. **Orphan Cleanup:** `DELETE FROM mempool_block_projections WHERE block_index >= current_batch_length` is run immediately after the UPSERT to delete any stale candidate blocks spanning beyond the current mempool depth.
+
+### Consequences
+
+- **Good:** Vastly reduced disk I/O and WAL bloat on the PostgreSQL instance.
+- **Good:** Safer concurrent reads during updates.
+- **Trade-off:** If PostgreSQL crashes, the `mempool_block_projections` table will be truncated. This is completely acceptable as it relies strictly on live streaming data that recovers in seconds.
+
+---
+
+## ADR-026: i18n Integration & UX Polish
+
+- **Date:** 2026-03-22
+- **Status:** ✅ IMPLEMENTED
+- **Phase:** Session 11 — UX Friction Fixes
+
+### Context
+
+The frontend infrastructure had the i18n context (dictionaries, Next.js generic provider) built out during Phase 3, but existing components were never wired to use it. Additionally, some UX/UI polish was required for presentation metrics (e.g., dynamic strategy strings, broken miner links due to naive URL encoding).
+
+### Decision
+
+**Connect the UI layer to the i18n Context and normalize dynamic values via the frontend.**
+
+1. **Isolating Server Components:** The standard `I18nProvider` caused Next.js Server Components to break or re-render inappropriately. We resolved this by wrapping only the inner interactive layers with the provider (`providers.tsx`), while keeping the root layout pure.
+2. **URL Formatting:** Links to mempool.space miner pools were breaking because `encodeURIComponent` produced `%20` for spaces, but mempool.space expects the names to be merged (e.g., `BraiinsPool`). Used `.replace(/\s+/g, '')` for exact mapping.
+3. **Dynamic Value Mapping:** Instead of modifying the backend (FastAPI/PostgreSQL) to return localized strings for internal business logic enumerators (e.g., `WAIT/BROADCAST`, `LOW/HIGH`, `STABLE/RISING/FALLING`), the frontend dictionaries (`en.ts`, `es.ts`) handle translation mapping dynamically: `translations.actions[patientAction]` or `translations.traffic[trafficLevel]`.
+4. **Advisory Tooltips & API Contracts:** Standardized English descriptions sent by the backend for `target_fee_rate` were normalized into structured objects, moving the string templating responsibility entirely to the frontend i18n layer (`"RBF: Pay to reach {{rate}} sat/vB"`).
+
+### Consequences
+
+- **Good:** Business logic state (WAIT/RISING/LOW) in the backend remains environment-agnostic.
+- **Good:** The entire dashboard responds instantaneously to the EN/ES toggle without refetching data.
+- **Good:** Prevented Server Components bloat on root layouts.
+
+### Related Files
+- `frontend/app/providers.tsx` — I18nProvider injection
+- `frontend/components/dashboard/*.tsx` — `useTranslations()` wiring
+- `frontend/lib/i18n/{en,es}.ts` — Dynamic dict mappings
+

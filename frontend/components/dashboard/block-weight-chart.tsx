@@ -7,6 +7,8 @@ import {
     TooltipTrigger,
     TooltipContent,
 } from "@/components/ui/tooltip"
+import { useTranslations } from "@/hooks/use-translations"
+import type { Dictionary } from "@/lib/i18n/en"
 
 // ── Constants ───────────────────────────────────────────────────
 
@@ -53,11 +55,11 @@ function getFullnessColor(pct: number): string {
     return "bg-muted-foreground/40"
 }
 
-function getFullnessLabel(pct: number): string {
-    if (pct >= 95) return "Full"
-    if (pct >= 80) return "Heavy"
-    if (pct >= 50) return "Normal"
-    return "Light"
+function getFullnessLabel(pct: number, t: Dictionary): string {
+    if (pct >= 95) return t.blockWeight.fullnessFull
+    if (pct >= 80) return t.blockWeight.fullnessHeavy
+    if (pct >= 50) return t.blockWeight.fullnessNormal
+    return t.blockWeight.fullnessLight
 }
 
 // ── Size Formatter ──────────────────────────────────────────────
@@ -70,7 +72,7 @@ function formatSize(bytes: number): string {
 
 // ── Block Bar Row ───────────────────────────────────────────────
 
-function BlockBarRow({ block }: { block: BlockBar }) {
+function BlockBarRow({ block, t }: { block: BlockBar; t: Dictionary }) {
     return (
         <div className="group flex items-center gap-3">
             {/* Height label */}
@@ -114,7 +116,7 @@ function BlockBarRow({ block }: { block: BlockBar }) {
 
             {/* Fullness label */}
             <span className="w-12 shrink-0 text-[10px] font-medium text-muted-foreground">
-                {getFullnessLabel(block.fullnessPct)}
+                {getFullnessLabel(block.fullnessPct, t)}
             </span>
         </div>
     )
@@ -124,12 +126,13 @@ function BlockBarRow({ block }: { block: BlockBar }) {
 
 export function BlockWeightChart() {
     const { data, isError } = useRecentBlocks()
+    const { t } = useTranslations()
 
     if (isError) {
         return (
             <div className="flex items-center gap-2 rounded-2xl border border-destructive/30 bg-destructive/5 p-5 text-sm text-destructive">
                 <AlertCircle className="h-4 w-4" />
-                <span>Unable to load block data</span>
+                <span>{t.blockWeight.unableToLoad}</span>
             </div>
         )
     }
@@ -144,7 +147,7 @@ export function BlockWeightChart() {
         sizeBytes: b.size_bytes,
         fullnessPct: (b.size_bytes / MAX_BLOCK_SIZE) * 100,
         txCount: b.tx_count,
-        poolName: b.pool_name ?? "Unknown",
+        poolName: b.pool_name ?? t.blockWeight.unknown,
         medianFee: b.median_fee,
     }))
 
@@ -155,16 +158,16 @@ export function BlockWeightChart() {
                 <div className="flex items-center gap-2">
                     <Box className="h-4 w-4 text-info" />
                     <h2 className="text-sm font-semibold text-foreground">
-                        Block Weight
+                        {t.blockWeight.title}
                     </h2>
                     <Tooltip>
                         <TooltipTrigger asChild>
-                            <button className="inline-flex items-center justify-center rounded-full text-muted-foreground/50 hover:text-muted-foreground transition-colors" aria-label="Info about Block Weight">
+                            <button className="inline-flex items-center justify-center rounded-full text-muted-foreground/50 hover:text-muted-foreground transition-colors" aria-label={`Info about ${t.blockWeight.title}`}>
                                 <Info className="h-3.5 w-3.5" />
                             </button>
                         </TooltipTrigger>
                         <TooltipContent side="top" className="max-w-[240px]">
-                            Visual comparison of recent block sizes vs the 4MB SegWit limit. Blocks over 90% capacity indicate high network demand. Pool badges show which mining pool found each block.
+                            {t.blockWeight.tooltipBlockWeight}
                         </TooltipContent>
                     </Tooltip>
                 </div>
@@ -187,12 +190,12 @@ export function BlockWeightChart() {
             {/* Block bars */}
             {blockBars.length === 0 ? (
                 <div className="flex h-[180px] items-center justify-center text-xs text-muted-foreground">
-                    No block data available
+                    {t.blockWeight.noData}
                 </div>
             ) : (
                 <div className="flex flex-col gap-1.5">
                     {blockBars.map((block) => (
-                        <BlockBarRow key={block.height} block={block} />
+                        <BlockBarRow key={block.height} block={block} t={t} />
                     ))}
                 </div>
             )}

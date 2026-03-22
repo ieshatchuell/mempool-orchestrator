@@ -4,6 +4,10 @@
 
 The system implements an **Event-Driven Architecture (EDA)** with **Clean Architecture** layers. Data flows from the Bitcoin network through Kafka to PostgreSQL, and is served to the dashboard via a read-only FastAPI API.
 
+Two Kafka topics decouple the pipeline:
+- **`mempool-raw`** — stats, projected blocks, and confirmed blocks (key-based routing).
+- **`block-signals`** — lightweight block signals (hash + height) consumed by the Block Fetcher.
+
 ```mermaid
 graph LR
     subgraph External
@@ -13,6 +17,7 @@ graph LR
 
     subgraph Workers
         ING["Ingestor<br/>(Radar)"]
+        BF["Block Fetcher"]
         SC["State Consumer<br/>(Materializer)"]
     end
 
@@ -27,9 +32,12 @@ graph LR
     end
 
     WS -->|"async WS"| ING
-    REST -->|"Signal & Fetch"| ING
-    ING -->|"produce"| RP
-    RP -->|"consume"| SC
+    ING -->|"stats, mempool_block"| RP
+    ING -->|"block signal"| RP
+    RP -->|"block-signals"| BF
+    BF -->|"REST GET"| REST
+    BF -->|"confirmed_block"| RP
+    RP -->|"mempool-raw"| SC
     SC -->|"INSERT/UPSERT"| PG
     PG -->|"SELECT"| API
     API -->|"JSON"| UI
@@ -51,6 +59,7 @@ graph TD
     subgraph APPLICATION ["Application Layer (Workers)"]
         direction LR
         W1["workers/ingestor.py<br/><i>WS → Kafka</i>"]
+        W3["workers/block_fetcher.py<br/><i>Kafka → REST → Kafka</i>"]
         W2["workers/state_consumer.py<br/><i>Kafka → PostgreSQL</i>"]
     end
 
@@ -76,6 +85,8 @@ graph TD
     %% Workers → Infrastructure + Domain
     W1 --> MSG
     W1 --> D
+    W3 --> MSG
+    W3 --> D
     W2 --> DB
     W2 --> D
 
@@ -97,7 +108,7 @@ graph TD
 
 ### 3.1 Ingestion Pipeline (The "Radar")
 
-The Ingestor connects to the mempool.space WebSocket API and routes validated events to Kafka by key:
+The Ingestor connects to the mempool.space WebSocket API and routes validated events to Kafka by key. For confirmed blocks, it publishes a lightweight signal to the `block-signals` topic — the actual REST fetch is handled by the separate Block Fetcher worker (Signal & Fetch decoupling).
 
 ```mermaid
 flowchart TD
@@ -106,19 +117,29 @@ flowchart TD
     FILTER -->|"Drop"| NULL["∅"]
     FILTER -->|"Pass"| ROUTE{"Route by Key"}
 
-    ROUTE -->|"mempoolInfo"| V1["Validate<br/>MempoolStats"]
+    ROUTE -->|"mempoolInfo"| ENRICH["Enrich<br/><i>median_fee from<br/>mempool-blocks[0]</i>"]
+    ENRICH --> V1["Validate<br/>MempoolStats"]
     ROUTE -->|"mempool-blocks"| V2["Validate<br/>MempoolBlock[]"]
-    ROUTE -->|"block"| SIGNAL["Signal & Fetch"]
-
-    SIGNAL --> FETCH["REST GET<br/>/v1/block/{hash}"]
-    FETCH --> V3["Validate<br/>ConfirmedBlock"]
+    ROUTE -->|"block"| SIG["Publish Signal<br/>{hash, height}"]
 
     V1 -->|'key=stats'| KAFKA["Redpanda<br/>mempool-raw"]
     V2 -->|'key=mempool_block'| KAFKA
-    V3 -->|'key=confirmed_block'| KAFKA
+    SIG -->|'key=block_signal'| SIGNALS["Redpanda<br/>block-signals"]
 ```
 
-### 3.2 State Consumer (Kafka → PostgreSQL)
+### 3.2 Block Fetcher (Signal → REST → Kafka)
+
+The Block Fetcher consumes lightweight signals from `block-signals`, fetches the full block data from the mempool.space REST API, validates it, and produces the enriched payload to `mempool-raw` for downstream materialization.
+
+```mermaid
+flowchart LR
+    SIGNALS["Redpanda<br/>block-signals<br/><i>group: block-fetchers</i>"] --> BF["Block Fetcher"]
+    BF -->|"REST GET<br/>/v1/block/{hash}"| REST["mempool.space<br/>REST API"]
+    REST --> VALIDATE["Validate<br/>ConfirmedBlock"]
+    VALIDATE -->|'key=confirmed_block'| KAFKA["Redpanda<br/>mempool-raw"]
+```
+
+### 3.3 State Consumer (Kafka → PostgreSQL)
 
 The State Consumer materializes Kafka events into PostgreSQL tables based on message key:
 
@@ -132,14 +153,14 @@ flowchart LR
 
     S --> INSERT["INSERT<br/>mempool_snapshots<br/><i>append-only</i>"]
     B --> UPSERT["INSERT ... ON CONFLICT<br/>DO NOTHING<br/>blocks<br/><i>idempotent + pool_name + fee_range</i>"]
-    MB --> SNAP["Snapshot Pattern<br/>DELETE + INSERT<br/>mempool_block_projections"]
+    MB --> PROJ["UPSERT + Orphan Cleanup<br/>ON CONFLICT (block_index) DO UPDATE<br/>+ DELETE WHERE index >= batch_len<br/>mempool_block_projections<br/><i>UNLOGGED</i>"]
 
     INSERT --> PG["PostgreSQL"]
     UPSERT --> PG
-    SNAP --> PG
+    PROJ --> PG
 ```
 
-### 3.3 API Layer (Read-Only Presentation + Inline Analytics)
+### 3.4 API Layer (Read-Only Presentation + Inline Analytics)
 
 ```mermaid
 flowchart LR
@@ -148,12 +169,12 @@ flowchart LR
     API --> Q1["/api/mempool/stats"]
     API --> Q2["/api/blocks/recent"]
     API --> Q3["/api/orchestrator/status<br/><i>EMA + Trend (inline)</i>"]
-    API --> Q4["/api/watchlist"]
+    API --> Q4["/api/watchlist<br/><i>advisories table</i>"]
 
     Q1 -->|"SELECT"| PG["PostgreSQL"]
     Q2 -->|"SELECT"| PG
     Q3 -->|"SELECT + EMA calc"| PG
-    Q4 -->|"Stub"| STUB["Empty State<br/><i>Phase 7</i>"]
+    Q4 -->|"SELECT"| PG
 ```
 
 ## 4. Component Breakdown
@@ -164,10 +185,9 @@ Pure Pydantic V2 contracts. Zero imports from databases, Kafka, or frameworks.
 
 | Schema | Purpose | Key Fields |
 |---|---|---|
-| `MempoolStats` | Mempool state from WS | `mempool_info.size`, `.bytes`, `.total_fee` |
+| `MempoolStats` | Mempool state from WS | `mempool_info.size`, `.bytes`, `.total_fee`, `.median_fee` |
 | `MempoolBlock` | Projected block template | `block_size`, `median_fee`, `fee_range` |
 | `ConfirmedBlock` | Mined block (Signal & Fetch) | `height`, `id`, `tx_count`, `extras.median_fee`, `extras.pool`, `extras.fee_range` |
-| `FeeAdvisory` | RBF/CPFP recommendation | `txid`, `action`, `rbf_fee_sats`, `cpfp_fee_sats` |
 
 **Conventions:**
 - All monetary values stored as `int` (Satoshis) — never `float`
@@ -206,10 +226,9 @@ erDiagram
         float median_fee
     }
 
-    mempool_block_projections {
-        int id PK
+    mempool_block_projections["mempool_block_projections (UNLOGGED)"] {
+        int block_index PK "0 = next block"
         timestamptz captured_at
-        int block_index "0 = next block"
         int block_size
         float block_v_size "ADR-003"
         int n_tx
@@ -230,6 +249,8 @@ erDiagram
     }
 ```
 
+> **Note:** `mempool_block_projections` is an **UNLOGGED** table — no WAL overhead for ephemeral projections that are replaced every ~10 seconds. Primary key is `block_index` enabling the UPSERT pattern.
+
 ### C. Infrastructure — Messaging (`src/infrastructure/messaging/`)
 
 | File | Purpose |
@@ -238,25 +259,27 @@ erDiagram
 
 ### D. Workers (`src/workers/`)
 
-| Worker | Role | Input → Output |
-|---|---|---|
-| `ingestor.py` | Radar | WebSocket → Kafka |
-| `state_consumer.py` | Materializer | Kafka → PostgreSQL (stats, blocks, projections) |
-| `tx_hunter.py` | Advisory Engine | Kafka → advisories table *(Phase 7)* |
+| Worker | Role | Input → Output | Justfile Recipe |
+|---|---|---|---|
+| `ingestor.py` | Radar | WebSocket → Kafka (`mempool-raw` + `block-signals`) | `just radar` |
+| `block_fetcher.py` | Fetcher | `block-signals` → REST → Kafka (`confirmed_block`) | `just fetcher` |
+| `state_consumer.py` | Materializer | Kafka → PostgreSQL (stats, blocks, projections) | `just state-writer` |
+| `tx_hunter.py` | Advisory Engine | REST API → `advisories` table (60s poll) | `just hunter` |
+| `backfill.py` | Backfiller | REST API → `blocks` table (incremental gap fill) | `just backfill` |
 
 ### E. API Layer (`src/api/`)
 
 | File | Purpose |
 |---|---|
 | `main.py` | FastAPI app, lifespan (DDL bootstrap + dispose), CORS, endpoints |
-| `queries.py` | Async SQLAlchemy query functions (read-only) |
+| `queries.py` | Async SQLAlchemy query functions (read-only) + inline analytics (EMA, trend, strategy) |
 | `schemas.py` | Response Pydantic models |
 
 ### F. Core (`src/core/`)
 
 | File | Purpose |
 |---|---|
-| `config.py` | `pydantic-settings` singleton. All env vars centralized. |
+| `config.py` | `pydantic-settings` singleton. All env vars centralized. Defines topics: `mempool_topic`, `block_signals_topic`. |
 
 ### G. Frontend Data Layer (TanStack Query v5)
 
@@ -288,21 +311,27 @@ graph LR
 ```mermaid
 graph TB
     subgraph "Docker Network"
-        RP["Redpanda<br/>:9092 (Kafka)<br/>:8080 (Console)"]
+        RP["Redpanda<br/>:9092 (Kafka)"]
         PG["PostgreSQL 16<br/>:5432<br/><i>mempool DB</i>"]
         PGA["pgAdmin<br/>:5050<br/><i>DB Viewer</i>"]
     end
 
     subgraph "Host Machine (Local)"
         ING["just radar<br/><i>Ingestor</i>"]
+        BF["just fetcher<br/><i>Block Fetcher</i>"]
         SC["just state-writer<br/><i>State Consumer</i>"]
+        HUN["just hunter<br/><i>Advisory Engine</i>"]
         API["just api<br/><i>FastAPI :8000</i>"]
     end
 
-    ING -->|produce| RP
-    RP -->|consume| SC
-    SC -->|write| PG
-    PG -->|read| API
+    ING -->|"produce"| RP
+    RP -->|"block-signals"| BF
+    BF -->|"produce"| RP
+    RP -->|"mempool-raw"| SC
+    SC -->|"write"| PG
+    PG -->|"read"| API
+    PG -->|"read"| HUN
+    HUN -->|"write"| PG
     PGA -->|"browse"| PG
 ```
 
@@ -313,7 +342,7 @@ backend/
 ├── src/
 │   ├── api/                    # Presentation Layer (FastAPI)
 │   │   ├── main.py             # App, lifespan, endpoints
-│   │   ├── queries.py          # Async SQLAlchemy queries
+│   │   ├── queries.py          # Async SQLAlchemy queries + inline analytics
 │   │   └── schemas.py          # Response models
 │   ├── core/                   # Configuration
 │   │   └── config.py           # pydantic-settings singleton
@@ -322,34 +351,41 @@ backend/
 │   ├── infrastructure/         # Infrastructure Layer
 │   │   ├── database/
 │   │   │   ├── session.py      # Async engine + session factory
-│   │   │   └── models.py       # ORM models
+│   │   │   └── models.py       # ORM models (4 tables)
 │   │   └── messaging/
 │   │       └── producer.py     # aiokafka async producer
 │   └── workers/                # Application Layer
 │       ├── ingestor.py         # WS → Kafka (Radar)
-│       ├── state_consumer.py   # Kafka → PostgreSQL
-│       └── tx_hunter.py        # RBF/CPFP (Phase 7)
+│       ├── block_fetcher.py    # block-signals → REST → Kafka (Fetcher)
+│       ├── state_consumer.py   # Kafka → PostgreSQL (Materializer)
+│       ├── tx_hunter.py        # RBF/CPFP Advisory Engine (60s poll)
+│       └── backfill.py         # Incremental block gap fill
 ├── scripts/
-│   ├── backfill_blocks.py      # Maintenance: 144-block initial load
+│   ├── backfill_blocks.py      # Legacy: 144-block destructive backfill
 │   └── 01_add_pool_and_projections.sql  # Manual migration
 └── tests/
     ├── test_config.py          # 12 tests
     ├── test_schemas.py         # Contract validation
-    ├── test_ingestor.py        # Routing logic
+    ├── test_ingestor.py        # Routing logic + enrichment
     ├── test_kafka_producer.py  # Async producer wrapper
-    └── test_state_consumer.py  # ORM models + Snapshot pattern (8 tests)
+    └── test_state_consumer.py  # ORM models + UPSERT pattern
 ```
 
 ## 7. Architectural Patterns
 
 ### Event-Driven Architecture (EDA)
 - **Event Broker:** Redpanda (Kafka-compatible, ARM64-native)
-- **Topic:** `mempool-raw` — single topic, key-based routing (`stats`, `mempool_block`, `confirmed_block`)
-- **Consumer Group:** `mempool-state-writers` — single consumer materializing to PostgreSQL
+- **Topics:**
+  - `mempool-raw` — key-based routing (`stats`, `mempool_block`, `confirmed_block`)
+  - `block-signals` — lightweight block signal (`{hash, height}`)
+- **Consumer Groups:**
+  - `mempool-state-writers` — State Consumer materializing to PostgreSQL
+  - `block-fetchers` — Block Fetcher consuming signals, producing enriched blocks
 
-### Signal & Fetch
-- **Signal (WebSocket):** Low-latency stream for mempool state changes
-- **Fetch (REST API):** On-demand retrieval for confirmed block data (avoids 1MB Kafka message limit)
+### Signal & Fetch (I/O Decoupled)
+- **Signal (WebSocket):** Ingestor publishes `{hash, height}` to `block-signals` immediately on block event — zero I/O latency
+- **Fetch (REST API):** Block Fetcher consumes signal, performs `GET /v1/block/{hash}`, validates, and produces `confirmed_block` to `mempool-raw`
+- **Rationale:** Decouples the latency-sensitive WebSocket consumer from the variable-latency REST fetch, preventing I/O stalls on the ingestion hot path
 
 ### Clean Architecture
 - **Dependency Rule:** Domain → ∅ | Infrastructure → Domain + Core | Workers → All | API → Infrastructure + Domain
@@ -358,13 +394,15 @@ backend/
 ### Idempotent Writes
 - `BlockRecord`: `INSERT ... ON CONFLICT (height) DO NOTHING`
 - `MempoolSnapshot`: Append-only (auto-increment PK)
-- `MempoolBlockProjection`: Snapshot pattern (DELETE + INSERT on each event)
+- `MempoolBlockProjection`: UPSERT (`ON CONFLICT (block_index) DO UPDATE`) + orphan cleanup (`DELETE WHERE block_index >= batch_len`). **UNLOGGED** table — no WAL overhead for ephemeral projections.
+- `AdvisoryRecord`: Rotating showcase pattern (DELETE all + INSERT per cycle)
 - Safe for Kafka consumer replay and backfill re-runs
 
 ### Data Validation at Boundary
 - All external data validated with Pydantic V2 `strict=True` at ingestion
 - Invalid payloads logged and dropped — never corrupt downstream storage
 - Monetary values: integer-only (Satoshis) to prevent IEEE 754 precision errors
+- Median fee enrichment: injected from `mempool-blocks[0]` before validation (ADR-021)
 
 ## 8. Data Governance
 

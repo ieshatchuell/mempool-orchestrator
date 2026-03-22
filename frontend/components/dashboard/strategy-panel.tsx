@@ -24,7 +24,9 @@ import {
 } from "@/components/ui/tooltip"
 import { useOrchestratorStatus } from "@/hooks/use-orchestrator-status"
 import { useRecentBlocks } from "@/hooks/use-recent-blocks"
+import { useTranslations } from "@/hooks/use-translations"
 import type { StrategyResult } from "@/lib/types"
+import type { Dictionary } from "@/lib/i18n/en"
 
 // ── Strategy Card ───────────────────────────────────────────────
 
@@ -33,11 +35,13 @@ function StrategyCard({
     icon,
     result,
     accent,
+    t,
 }: {
     label: string
     icon: React.ReactNode
     result: StrategyResult | undefined
     accent: string
+    t: Dictionary
 }) {
     if (!result) {
         return (
@@ -64,7 +68,7 @@ function StrategyCard({
             </div>
             <div className="flex items-baseline gap-2">
                 <span className={`text-2xl font-bold tracking-tight ${actionColor}`}>
-                    {result.action}
+                    {result.action === "WAIT" ? t.strategy.actionWait : t.strategy.actionBroadcast}
                 </span>
             </div>
             <div className="flex items-center gap-3 text-xs text-muted-foreground">
@@ -73,7 +77,7 @@ function StrategyCard({
                 </span>
                 <span className="h-3 w-px bg-border" />
                 <span>
-                    {(result.confidence * 100).toFixed(0)}% confidence
+                    {(result.confidence * 100).toFixed(0)}% {t.strategy.confidence}
                 </span>
             </div>
         </div>
@@ -87,11 +91,11 @@ interface SparklinePoint {
     fee: number
 }
 
-function FeeSparkline({ data }: { data: SparklinePoint[] }) {
+function FeeSparkline({ data, noDataLabel, medianFeeLabel }: { data: SparklinePoint[]; noDataLabel: string; medianFeeLabel: string }) {
     if (data.length === 0) {
         return (
             <div className="flex h-[120px] items-center justify-center text-xs text-muted-foreground">
-                No block data yet
+                {noDataLabel}
             </div>
         )
     }
@@ -122,7 +126,7 @@ function FeeSparkline({ data }: { data: SparklinePoint[] }) {
                         borderRadius: "8px",
                         fontSize: "12px",
                     }}
-                    formatter={(value: number) => [`${value.toFixed(2)} sat/vB`, "Median Fee"]}
+                    formatter={(value: number) => [`${value.toFixed(2)} sat/vB`, medianFeeLabel]}
                     labelStyle={{ color: "var(--muted-foreground)" }}
                 />
                 <Line
@@ -140,7 +144,7 @@ function FeeSparkline({ data }: { data: SparklinePoint[] }) {
 
 // ── Trend Badge ─────────────────────────────────────────────────
 
-function TrendBadge({ trend }: { trend: string }) {
+function TrendBadge({ trend, t }: { trend: string; t: Dictionary }) {
     const Icon =
         trend === "RISING"
             ? TrendingUp
@@ -155,10 +159,17 @@ function TrendBadge({ trend }: { trend: string }) {
                 ? "text-success"
                 : "text-muted-foreground"
 
+    const label =
+        trend === "RISING"
+            ? t.strategy.trendRising
+            : trend === "FALLING"
+                ? t.strategy.trendFalling
+                : t.strategy.trendStable
+
     return (
         <div className={`flex items-center gap-1 ${color}`}>
             <Icon className="h-3.5 w-3.5" />
-            <span className="text-xs font-medium">{trend}</span>
+            <span className="text-xs font-medium">{label}</span>
         </div>
     )
 }
@@ -168,6 +179,7 @@ function TrendBadge({ trend }: { trend: string }) {
 export function StrategyPanel() {
     const { data: status, isError: statusError } = useOrchestratorStatus()
     const { data: blocksData } = useRecentBlocks(50)
+    const { t } = useTranslations()
 
     // Build sparkline data from recent blocks (oldest first for time axis)
     const sparklineData: SparklinePoint[] = (blocksData?.blocks ?? [])
@@ -182,7 +194,7 @@ export function StrategyPanel() {
         return (
             <div className="flex items-center gap-2 rounded-2xl border border-destructive/30 bg-destructive/5 p-5 text-sm text-destructive">
                 <AlertCircle className="h-4 w-4" />
-                <span>Unable to load strategy data</span>
+                <span>{t.strategy.unableToLoad}</span>
             </div>
         )
     }
@@ -193,26 +205,24 @@ export function StrategyPanel() {
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-1.5">
                     <h2 className="text-sm font-semibold text-foreground">
-                        Strategy &amp; Trend
+                        {t.strategy.title}
                     </h2>
                     <Tooltip>
                         <TooltipTrigger asChild>
                             <button
                                 className="inline-flex items-center justify-center rounded-full text-muted-foreground/50 hover:text-muted-foreground transition-colors"
-                                aria-label="Info about Strategy & Trend"
+                                aria-label={`Info about ${t.strategy.title}`}
                             >
                                 <Info className="h-3.5 w-3.5" />
                             </button>
                         </TooltipTrigger>
                         <TooltipContent side="top" className="max-w-[280px]">
-                            Real-time logic engine. Compares current fees vs. 100-block
-                            history. &apos;Patient&apos; mode suggests waiting during spikes;
-                            &apos;Reliable&apos; mode prioritizes confirmation speed.
+                            {t.strategy.tooltipStrategy}
                         </TooltipContent>
                     </Tooltip>
                 </div>
                 <div className="flex items-center gap-3">
-                    {status && <TrendBadge trend={status.ema_trend} />}
+                    {status && <TrendBadge trend={status.ema_trend} t={t} />}
                     {status && (
                         <span className="rounded-lg bg-muted px-2 py-1 font-mono text-xs text-muted-foreground">
                             EMA {status.ema_fee.toFixed(1)}
@@ -224,16 +234,18 @@ export function StrategyPanel() {
             {/* Strategy Cards Row */}
             <div className="flex gap-3">
                 <StrategyCard
-                    label="Patient"
+                    label={t.strategy.patient}
                     icon={<Clock className="h-4 w-4 text-info" />}
                     result={status?.patient}
                     accent="border-info/30 bg-info/5"
+                    t={t}
                 />
                 <StrategyCard
-                    label="Reliable"
+                    label={t.strategy.fast}
                     icon={<Zap className="h-4 w-4 text-bitcoin" />}
                     result={status?.reliable}
                     accent="border-bitcoin/30 bg-bitcoin/5"
+                    t={t}
                 />
             </div>
 
@@ -241,15 +253,19 @@ export function StrategyPanel() {
             <div>
                 <div className="mb-1 flex items-center justify-between">
                     <span className="text-xs font-medium text-muted-foreground">
-                        Median Fee Trend (last {sparklineData.length} blocks)
+                        {t.strategy.medianFeeTrend.replace("{count}", String(sparklineData.length))}
                     </span>
                     {status && (
                         <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                            Premium {status.fee_premium_pct > 0 ? "+" : ""}{status.fee_premium_pct.toFixed(1)}%
+                            {t.strategy.premium} {status.fee_premium_pct > 0 ? "+" : ""}{status.fee_premium_pct.toFixed(1)}%
                         </span>
                     )}
                 </div>
-                <FeeSparkline data={sparklineData} />
+                <FeeSparkline
+                    data={sparklineData}
+                    noDataLabel={t.strategy.noBlockData}
+                    medianFeeLabel={t.strategy.medianFee}
+                />
             </div>
         </div>
     )

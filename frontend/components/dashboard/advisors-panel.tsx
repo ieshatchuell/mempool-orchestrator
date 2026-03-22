@@ -21,24 +21,26 @@ import {
   Info,
 } from "lucide-react"
 import { useWatchlist } from "@/hooks/use-watchlist"
+import { useTranslations } from "@/hooks/use-translations"
 import type { WatchlistAdvisory, AdvisorAction } from "@/lib/types"
+import type { Dictionary } from "@/lib/i18n/en"
 
 // ── Helpers ─────────────────────────────────────────────────────
 
-function StatusBadge({ status }: { status: string }) {
+function StatusBadge({ status, t }: { status: string; t: Dictionary }) {
   const normalizedStatus = status.toLowerCase()
   let styles = "bg-muted text-muted-foreground"
   let label = status
 
   if (normalizedStatus === "stuck") {
     styles = "bg-destructive/10 text-destructive"
-    label = "Stuck"
+    label = t.advisors.statusStuck
   } else if (normalizedStatus === "confirmed") {
     styles = "bg-success-soft text-success"
-    label = "Confirmed"
+    label = t.advisors.statusConfirmed
   } else if (normalizedStatus === "pending") {
     styles = "bg-muted text-muted-foreground"
-    label = "Pending"
+    label = t.advisors.statusPending
   }
 
   return (
@@ -53,9 +55,11 @@ function StatusBadge({ status }: { status: string }) {
 function AdvisorBadge({
   type,
   advisor,
+  t,
 }: {
   type: "RBF" | "CPFP"
   advisor: AdvisorAction | null
+  t: Dictionary
 }) {
   if (!advisor) return <span className="text-xs text-muted-foreground">—</span>
 
@@ -63,6 +67,10 @@ function AdvisorBadge({
     type === "RBF"
       ? "bg-bitcoin-soft text-bitcoin"
       : "bg-info-soft text-info"
+
+  const actionText = type === "RBF"
+    ? t.advisors.rbfAction.replace("{fee}", advisor.target_fee_rate.toFixed(1))
+    : t.advisors.cpfpAction.replace("{fee}", advisor.target_fee_rate.toFixed(1))
 
   return (
     <div className="flex flex-col gap-0.5">
@@ -72,7 +80,7 @@ function AdvisorBadge({
         >
           {type}
         </span>
-        <span className="text-xs text-foreground">{advisor.action}</span>
+        <span className="text-xs text-foreground">{actionText}</span>
       </div>
       {advisor.cost_sats !== null && (
         <span className="pl-7 font-mono text-[11px] text-muted-foreground">
@@ -114,12 +122,13 @@ function AdvisorsSkeleton() {
 
 export function AdvisorsPanel() {
   const { data, isError } = useWatchlist()
+  const { t } = useTranslations()
 
   if (isError) {
     return (
       <div className="flex items-center gap-2 rounded-2xl border border-destructive/30 bg-destructive/5 p-5 text-sm text-destructive">
         <AlertCircle className="h-4 w-4" />
-        <span>Unable to load fee advisors</span>
+        <span>{t.advisors.unableToLoad}</span>
       </div>
     )
   }
@@ -135,34 +144,32 @@ export function AdvisorsPanel() {
         <div className="flex items-center gap-2.5">
           <Lightbulb className="h-4 w-4 text-bitcoin" />
           <h2 className="text-sm font-semibold text-foreground">
-            Fee Advisors
+            {t.advisors.title}
           </h2>
           <Tooltip>
             <TooltipTrigger asChild>
               <button
                 className="inline-flex items-center justify-center rounded-full text-muted-foreground/50 hover:text-muted-foreground transition-colors"
-                aria-label="Info about Fee Advisors"
+                aria-label={`Info about ${t.advisors.title}`}
               >
                 <Info className="h-3.5 w-3.5" />
               </button>
             </TooltipTrigger>
             <TooltipContent side="top" className="max-w-[280px]">
-              Automated scanner that detects transactions stuck in the mempool
-              and calculates optimal RBF (Replace-By-Fee) or CPFP
-              (Child-Pays-For-Parent) top-up fees.
+              {t.advisors.tooltipAdvisors}
             </TooltipContent>
           </Tooltip>
           <Badge variant="outline" className="text-[10px] uppercase tracking-wider">
-            Live Scanning
+            {t.advisors.liveScanning}
           </Badge>
           <div className="flex items-center gap-2">
             {stuck_count > 0 && (
               <span className="flex items-center gap-1.5 rounded-lg bg-destructive/10 px-2 py-1 text-xs font-medium text-destructive">
-                {stuck_count} stuck
+                {stuck_count} {t.advisors.stuck}
               </span>
             )}
             <span className="text-xs text-muted-foreground">
-              {total_count} tracked
+              {total_count} {t.advisors.tracked}
             </span>
           </div>
         </div>
@@ -171,7 +178,7 @@ export function AdvisorsPanel() {
       {/* Table */}
       {advisories.length === 0 ? (
         <div className="px-5 py-8 text-center text-sm text-muted-foreground">
-          No stuck transactions detected. The scanner is monitoring the mempool.
+          {t.advisors.noStuckTx}
         </div>
       ) : (
         <div className="overflow-x-auto">
@@ -179,19 +186,19 @@ export function AdvisorsPanel() {
             <TableHeader>
               <TableRow className="border-border hover:bg-transparent">
                 <TableHead className="text-xs font-medium text-muted-foreground">
-                  TXID
+                  {t.advisors.colTxid}
                 </TableHead>
                 <TableHead className="text-xs font-medium text-muted-foreground">
-                  Status
+                  {t.advisors.colStatus}
                 </TableHead>
                 <TableHead className="text-right text-xs font-medium text-muted-foreground">
-                  Fee Rate
+                  {t.advisors.colFeeRate}
                 </TableHead>
                 <TableHead className="text-xs font-medium text-muted-foreground">
-                  RBF (Sender)
+                  {t.advisors.colRbf}
                 </TableHead>
                 <TableHead className="text-xs font-medium text-muted-foreground">
-                  CPFP (Receiver)
+                  {t.advisors.colCpfp}
                 </TableHead>
               </TableRow>
             </TableHeader>
@@ -217,7 +224,7 @@ export function AdvisorsPanel() {
                     </div>
                   </TableCell>
                   <TableCell>
-                    <StatusBadge status={a.status} />
+                    <StatusBadge status={a.status} t={t} />
                   </TableCell>
                   <TableCell className="text-right">
                     <span className="font-mono text-sm tabular-nums text-foreground">
@@ -230,10 +237,10 @@ export function AdvisorsPanel() {
                     </span>
                   </TableCell>
                   <TableCell>
-                    <AdvisorBadge type="RBF" advisor={a.rbf} />
+                    <AdvisorBadge type="RBF" advisor={a.rbf} t={t} />
                   </TableCell>
                   <TableCell>
-                    <AdvisorBadge type="CPFP" advisor={a.cpfp} />
+                    <AdvisorBadge type="CPFP" advisor={a.cpfp} t={t} />
                   </TableCell>
                 </TableRow>
               ))}

@@ -57,7 +57,7 @@ class RecentBlocksResponse(BaseModel):
 class AdvisorAction(BaseModel):
     """Single advisor recommendation (RBF or CPFP)."""
 
-    action: str = Field(..., description="Human-readable recommendation")
+    target_fee_rate: float = Field(..., description="Target fee rate in sat/vB")
     cost_sats: int | None = Field(None, description="Estimated cost in satoshis")
 
 

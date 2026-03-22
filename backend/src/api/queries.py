@@ -64,6 +64,12 @@ async def query_mempool_stats() -> dict:
         delta_total_fee_pct = None
         delta_blocks_pct = None
 
+        # Gate: require at least 30 minutes between snapshots for meaningful deltas.
+        # Without this, early startup or sparse data produces misleading 0.0% deltas.
+        min_delta_gap = timedelta(minutes=30)
+        if old and (latest.captured_at - old.captured_at) < min_delta_gap:
+            old = None  # Treat as "no reliable history"
+
         if old:
             if old.tx_count > 0:
                 delta_size_pct = round(((latest.tx_count - old.tx_count) / old.tx_count) * 100, 1)
@@ -132,7 +138,7 @@ async def query_recent_blocks(limit: int = 10) -> dict:
 
 
 # =============================================================================
-# WATCHLIST (Stub — deferred to advisory phase)
+# WATCHLIST (Advisory Engine — reads from advisories table)
 # =============================================================================
 
 async def query_watchlist_advisories() -> dict:
@@ -159,11 +165,11 @@ async def query_watchlist_advisories() -> dict:
                 "status": "Stuck" if r.action == "BUMP" else "Pending",
                 "current_fee_rate": r.current_fee_rate,
                 "rbf": {
-                    "action": f"Replace with {r.target_fee_rate:.1f} sat/vB",
+                    "target_fee_rate": round(r.target_fee_rate, 1),
                     "cost_sats": r.rbf_fee_sats,
                 } if r.rbf_fee_sats else None,
                 "cpfp": {
-                    "action": f"Child pays to reach {r.target_fee_rate:.1f} sat/vB",
+                    "target_fee_rate": round(r.target_fee_rate, 1),
                     "cost_sats": r.cpfp_fee_sats,
                 } if r.cpfp_fee_sats else None,
             })

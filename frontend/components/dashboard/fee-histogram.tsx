@@ -16,6 +16,7 @@ import {
     TooltipTrigger,
     TooltipContent,
 } from "@/components/ui/tooltip"
+import { useTranslations } from "@/hooks/use-translations"
 
 // ── Types ───────────────────────────────────────────────────────
 
@@ -79,12 +80,13 @@ function CustomTooltip({
 
 export function FeeHistogram() {
     const { data, isError } = useRecentBlocks()
+    const { t } = useTranslations()
 
     if (isError) {
         return (
             <div className="flex items-center gap-2 rounded-2xl border border-destructive/30 bg-destructive/5 p-5 text-sm text-destructive">
                 <AlertCircle className="h-4 w-4" />
-                <span>Unable to load fee distribution</span>
+                <span>{t.feeHistogram.unableToLoad}</span>
             </div>
         )
     }
@@ -110,22 +112,22 @@ export function FeeHistogram() {
                 <div className="flex items-center gap-2">
                     <BarChart3 className="h-4 w-4 text-bitcoin" />
                     <h2 className="text-sm font-semibold text-foreground">
-                        Fee Distribution
+                        {t.feeHistogram.title}
                     </h2>
                     <InfoTooltip>
                         <TooltipTrigger asChild>
-                            <button className="inline-flex items-center justify-center rounded-full text-muted-foreground/50 hover:text-muted-foreground transition-colors" aria-label="Info about Fee Distribution">
+                            <button className="inline-flex items-center justify-center rounded-full text-muted-foreground/50 hover:text-muted-foreground transition-colors" aria-label={`Info about ${t.feeHistogram.title}`}>
                                 <Info className="h-3.5 w-3.5" />
                             </button>
                         </TooltipTrigger>
                         <TooltipContent side="top" className="max-w-[240px]">
-                            Fee distribution across 7 percentile bands for the latest confirmed block. The red &quot;Max&quot; bar shows the highest fee paid — useful for detecting fee spikes.
+                            {t.feeHistogram.tooltipFeeDistribution}
                         </TooltipContent>
                     </InfoTooltip>
                 </div>
                 {latestBlock && (
                     <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                        Block #{latestBlock.height.toLocaleString()}
+                        {t.feeHistogram.block} #{latestBlock.height.toLocaleString()}
                     </span>
                 )}
             </div>
@@ -133,7 +135,7 @@ export function FeeHistogram() {
             {/* Chart */}
             {!hasData ? (
                 <div className="flex h-[200px] items-center justify-center text-xs text-muted-foreground">
-                    No fee distribution data available
+                    {t.feeHistogram.noData}
                 </div>
             ) : (
                 <ResponsiveContainer width="100%" height={200}>
@@ -188,21 +190,21 @@ export function FeeHistogram() {
                         className="inline-block h-2 w-2 rounded-sm"
                         style={{ backgroundColor: "var(--success)" }}
                     />
-                    Cheap
+                    {t.feeHistogram.legendCheap}
                 </span>
                 <span className="flex items-center gap-1">
                     <span
                         className="inline-block h-2 w-2 rounded-sm"
                         style={{ backgroundColor: "var(--bitcoin)" }}
                     />
-                    Median
+                    {t.feeHistogram.legendMedian}
                 </span>
                 <span className="flex items-center gap-1">
                     <span
                         className="inline-block h-2 w-2 rounded-sm"
                         style={{ backgroundColor: "var(--destructive)" }}
                     />
-                    Premium
+                    {t.feeHistogram.legendPremium}
                 </span>
             </div>
         </div>

@@ -52,19 +52,26 @@ export const en = {
     statusStuck: "Stuck",
     statusConfirmed: "Confirmed",
     statusPending: "Pending",
+    rbfAction: "Replace with {fee} sat/vB",
+    cpfpAction: "Child pays to reach {fee} sat/vB",
   },
   strategy: {
     title: "Strategy & Trend",
     patient: "Patient",
-    reliable: "Reliable",
+    fast: "Fast",
     confidence: "confidence",
     medianFeeTrend: "Median Fee Trend (last {count} blocks)",
     premium: "Premium",
     noBlockData: "No block data yet",
     unableToLoad: "Unable to load strategy data",
     tooltipStrategy:
-      "Real-time logic engine. Compares current fees vs. 100-block history. 'Patient' mode suggests waiting during spikes; 'Reliable' mode prioritizes confirmation speed.",
+      "Real-time logic engine. Compares current fees vs. 100-block history. 'Patient' mode suggests waiting during spikes; 'Fast' mode prioritizes confirmation speed.",
     medianFee: "Median Fee",
+    actionWait: "WAIT",
+    actionBroadcast: "BROADCAST",
+    trendStable: "STABLE",
+    trendRising: "RISING",
+    trendFalling: "FALLING",
   },
   feeHistogram: {
     title: "Fee Distribution",
@@ -109,15 +116,23 @@ export const en = {
   },
   statusBar: {
     patient: "Patient",
-    reliable: "Reliable",
+    fast: "Fast",
     emaFee: "EMA Fee",
     traffic: "Traffic",
     apiOffline: "API offline",
     block: "Block",
+    trafficLow: "LOW",
+    trafficNormal: "NORMAL",
+    trafficHigh: "HIGH",
   },
   language: {
     toggle: "EN/ES",
   },
 } as const;
 
-export type Dictionary = typeof en;
+/** Recursively widen all string literals to `string` so locale files can use different values. */
+type DeepStringify<T> = {
+  [K in keyof T]: T[K] extends string ? string : DeepStringify<T[K]>;
+};
+
+export type Dictionary = DeepStringify<typeof en>;
