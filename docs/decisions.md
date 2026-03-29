@@ -2145,3 +2145,32 @@ The frontend infrastructure had the i18n context (dictionaries, Next.js generic 
 - `frontend/components/dashboard/*.tsx` — `useTranslations()` wiring
 - `frontend/lib/i18n/{en,es}.ts` — Dynamic dict mappings
 
+---
+
+## ADR-027: Full Containerization Migration
+- **Date:** 2026-03-29
+- **Status:** Accepted
+- **Triggered by:** Need for strict environment parity and scaling constraints.
+
+### Context
+The hybrid execution approach (running local Python `uv` processes for workers alongside a Dockerized backbone for Postgres/Redpanda) created environment fragility and operational complexity. As the architecture evolved into an asynchronous microservices pattern, managing 5+ distinct terminal windows locally hindered scalability, deployment repeatability, and reliability testing. 
+
+Furthermore, the original design included DuckDB (OLAP storage), Redis (cache layer), and Ollama (local LLM inference). These components proved unnecessary or overly complex for the strict transactional RBF/CPFP requirements.
+
+### Decision
+Migrate the entire stack to **Full Containerization** and strip out legacy data layers:
+1. **Consolidation**: Removed DuckDB, Redis, and Ollama. The cluster strictly relies on PostgreSQL for persistent state, Redpanda as the event broker, and FastAPI as the presentation API.
+2. Single root `docker-compose.yml` defining all layers: infrastructure, APIs, discrete workers (Ingestor, Block Fetcher, State Consumer, TX Hunter), and frontend UI.
+3. Strict internal Docker DNS routing (e.g., `postgresql+asyncpg://mempool:mempool@postgres:5432`).
+4. Execution lifecycle enforced strictly via Docker healthchecks (`depends_on: condition: service_healthy`) to prevent startup race conditions.
+5. `Justfile` overhauled to eliminate local `uv` scripting in favor of cluster commands (`just up`, `just logs`).
+
+### Consequences
+**Positive:**
+1. **Total Isolation & Parity:** Development behaves identically to production bridging.
+2. **Simplified Architecture:** Eliminating DuckDB/Redis/Ollama vastly reduces overhead and potential failure points.
+3. **Resilience & Fault Tolerance:** Automatic restart policies and health-checking natively managed by Docker daemon.
+4. **No Host Dependencies:** Local environments no longer require `python` or `uv` to orchestrate the cluster. Code base is pure zero-friction for onboarding.
+
+**Trade-offs:**
+1. Debugger attachment requires connecting to running Docker containers instead of native local execution.

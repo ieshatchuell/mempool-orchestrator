@@ -1,21 +1,28 @@
 # Mempool Orchestrator
 
-An event-driven data platform that ingests, processes, and visualizes Bitcoin mempool dynamics for fee optimization and treasury management.
+An asynchronous, event-driven orchestration engine engineered to enforce **Fee Fairness** across treasury operations. By analyzing real-time Bitcoin network consensus dynamics, it executes mathematically precise RBF (Replace-By-Fee) and CPFP (Child-Pays-For-Parent) strategies to permanently eliminate the systemic overpayment of miner fees caused by reactive bidding.
+
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/light_live_market.png">
+  <img alt="Live Market Dynamics Dashboard" src="docs/images/dark_live_market.png">
+</picture>
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/light_settlement_history.png">
+  <img alt="Settlement History View" src="docs/images/dark_settlement_history.png">
+</picture>
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/light_recent_blocks.png">
+  <img alt="Recent Blocks Analytics" src="docs/images/dark_recent_blocks.png">
+</picture>
 
 ## Tech Stack
 
 | Layer | Technology |
 |---|---|
-| **Runtime** | Python 3.12+ (managed by `uv`) |
-| **Event Broker** | Redpanda (Kafka-compatible) |
-| **Database** | PostgreSQL 16 (async via SQLAlchemy 2.0 + asyncpg) |
-| **Messaging** | aiokafka (async Kafka producer/consumer) |
-| **Web API** | FastAPI (async, read-only from PostgreSQL) |
-| **Frontend** | Next.js + shadcn/ui (React dashboard) |
-| **Data Fetching** | TanStack Query v5 (SSR-safe polling) |
-| **i18n** | Custom EN/ES context (React hooks + dictionaries) |
-| **Infrastructure** | Docker / OrbStack |
-| **IDE** | Antigravity (Gemini 3) |
+| **Runtime / Async** | ![Python](https://img.shields.io/badge/python-3670A0?style=for-the-badge&logo=python&logoColor=ffdd54) ![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi) |
+| **Event Broker** | ![Redpanda](https://img.shields.io/badge/redpanda-000000?style=for-the-badge&logo=apachekafka&logoColor=white) |
+| **Materialized State** | ![PostgreSQL](https://img.shields.io/badge/postgresql-4169e1?style=for-the-badge&logo=postgresql&logoColor=white) |
+| **UI Presentation** | ![Next JS](https://img.shields.io/badge/Next-black?style=for-the-badge&logo=next.js&logoColor=white) |
 
 ## Architecture
 
@@ -48,55 +55,36 @@ mempool.space WS ──→ Ingestor ──→ Redpanda ──→ State Consumer 
 ## Quick Start
 
 ### Prerequisites
-- **Python 3.12+** (managed via `uv`)
-- **Docker** (via OrbStack recommended)
+- **Docker** & **Docker Compose**
 - **Just** (Command Runner)
 
-### Configuration
-Copy `.env.example` to `.env` and adjust values:
+### Running the Orchestration Cluster
+
+The entire microservices architecture is encapsulated within Docker. Run the environment easily via `Just`:
+
 ```bash
+# Provide local environment variables for the cluster
 cp .env.example .env
+
+# Builds and starts Redpanda, Postgres, FastAPI, Workers, and Next.js
+just up
+
+# Verify all healthchecks and container states
+just status
+
+# Tail logs surgically (e.g., just logs worker-tx-hunter)
+just logs <name>
 ```
 
-### Installation
+**Access Points:**
+- **Dashboard:** `http://localhost:3000`
+- **FastAPI Docs:** `http://localhost:8000/docs`
+- **pgAdmin DB Viewer:** `http://localhost:5050` (see `.env` for credentials)
+
+### Shutting Down
 ```bash
-just sync
+just down        # Stops all services and clears the network
 ```
-
-### Running the Full Stack
-
-The orchestrator is composed of independent workers that run in separate terminals. Follow this sequence:
-
-**Step 1 — Infrastructure** (start the backbone services):
-```bash
-just infra-up         # Starts Redpanda (Kafka) + PostgreSQL + pgAdmin
-just infra-status     # Verify all containers are healthy
-```
-
-**Step 2 — Historical Sync** (seed the database with recent blocks):
-```bash
-just backfill         # Incremental gap detection — fetches only missing blocks
-```
-
-**Step 3 — Data Pipeline** (each worker runs in its own terminal):
-```bash
-just radar            # Terminal 1: Ingestor (WS → Kafka: stats, blocks, signals)
-just fetcher          # Terminal 2: Block Fetcher (block-signals → REST → Kafka)
-just state-writer     # Terminal 3: State Consumer (Kafka → PostgreSQL)
-just hunter           # Terminal 4: Advisory Engine (60s poll → advisories table)
-```
-
-**Step 4 — Presentation** (start the API and dashboard):
-```bash
-just api              # Start FastAPI server (port 8000, auto-backfills on boot)
-just dashboard        # Launch Next.js dashboard (port 3000)
-```
-
-### Other Commands
-```bash
-just infra-down       # Stop all Docker services
-just infra-logs       # Tail infrastructure logs
-just db-viewer        # Open pgAdmin in browser (port 5050)
 just test             # Run backend test suite
 just check            # System health check (Python env + Docker)
 just sync             # Sync backend dependencies

@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     is configurable.
     """
     # Kafka (Redpanda)
-    kafka_bootstrap_servers: str = "localhost:9092"
+    kafka_bootstrap_servers: str = "redpanda:9092"
     mempool_topic: str = "mempool-raw"
     block_signals_topic: str = "block-signals"
 
@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     mempool_api_url: str = "https://mempool.space/api"
 
     # Storage — PostgreSQL (async via asyncpg)
-    postgres_dsn: str = "postgresql+asyncpg://mempool:mempool@localhost:5432/mempool"
+    postgres_dsn: str = "postgresql+asyncpg://mempool:mempool@postgres:5432/mempool"
 
     # Kafka consumer batch size
     kafka_batch_size: int = 50

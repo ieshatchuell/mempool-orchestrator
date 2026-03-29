@@ -1,0 +1,138 @@
+services:
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:latest
+    command:
+      - redpanda start
+      - --smp 1
+      - --memory 1G
+      - --reserve-memory 0M
+      - --overprovisioned
+      - --node-id 0
+      - --check=false
+      - --kafka-addr PLAINTEXT://0.0.0.0:9092,OUTSIDE://0.0.0.0:29092
+      - --advertise-kafka-addr PLAINTEXT://redpanda:9092,OUTSIDE://localhost:29092
+    ports:
+      - "9092:9092"
+    volumes:
+      - ./.docker-data/redpanda:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: mempool
+      POSTGRES_PASSWORD: mempool
+      POSTGRES_DB: mempool
+    volumes:
+      - ./.docker-data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mempool -d mempool"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: pgadmin
+    ports:
+      - "5050:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@mempool.local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  fastapi:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: fastapi
+    command: ["uv", "run", "uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "8000:8000"
+    environment:
+      - POSTGRES_DSN=postgresql+asyncpg://mempool:mempool@postgres:5432/mempool
+      - KAFKA_BOOTSTRAP_SERVERS=redpanda:9092
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  worker-ingestor:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: worker-ingestor
+    command: ["uv", "run", "python", "-m", "src.workers.ingestor"]
+    environment:
+      - POSTGRES_DSN=postgresql+asyncpg://mempool:mempool@postgres:5432/mempool
+      - KAFKA_BOOTSTRAP_SERVERS=redpanda:9092
+    depends_on:
+      redpanda:
+        condition: service_healthy
+
+  worker-state-consumer:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: worker-state-consumer
+    command: ["uv", "run", "python", "-m", "src.workers.state_consumer"]
+    environment:
+      - POSTGRES_DSN=postgresql+asyncpg://mempool:mempool@postgres:5432/mempool
+      - KAFKA_BOOTSTRAP_SERVERS=redpanda:9092
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  worker-block-fetcher:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: worker-block-fetcher
+    command: ["uv", "run", "python", "-m", "src.workers.block_fetcher"]
+    environment:
+      - POSTGRES_DSN=postgresql+asyncpg://mempool:mempool@postgres:5432/mempool
+      - KAFKA_BOOTSTRAP_SERVERS=redpanda:9092
+    depends_on:
+      redpanda:
+        condition: service_healthy
+
+  worker-tx-hunter:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: worker-tx-hunter
+    command: ["uv", "run", "python", "-m", "src.workers.tx_hunter"]
+    environment:
+      - POSTGRES_DSN=postgresql+asyncpg://mempool:mempool@postgres:5432/mempool
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - INTERNAL_API_URL=http://fastapi:8000
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    depends_on:
+      fastapi:
+        condition: service_healthy

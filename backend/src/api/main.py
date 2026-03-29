@@ -121,3 +121,9 @@ async def get_orchestrator_status():
     """Market metrics: fees, EMA, traffic level, strategy data (pure SQL/Python)."""
     data = await query_orchestrator_status()
     return OrchestratorStatusResponse(**data)
+
+
+@app.get("/api/health")
+async def health_check():
+    """Health check endpoint for Docker compose."""
+    return {"status": "ok"}

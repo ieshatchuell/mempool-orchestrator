@@ -310,18 +310,16 @@ graph LR
 
 ```mermaid
 graph TB
-    subgraph "Docker Network"
-        RP["Redpanda<br/>:9092 (Kafka)"]
-        PG["PostgreSQL 16<br/>:5432<br/><i>mempool DB</i>"]
-        PGA["pgAdmin<br/>:5050<br/><i>DB Viewer</i>"]
-    end
-
-    subgraph "Host Machine (Local)"
-        ING["just radar<br/><i>Ingestor</i>"]
-        BF["just fetcher<br/><i>Block Fetcher</i>"]
-        SC["just state-writer<br/><i>State Consumer</i>"]
-        HUN["just hunter<br/><i>Advisory Engine</i>"]
-        API["just api<br/><i>FastAPI :8000</i>"]
+    subgraph "Docker Orchestration Cluster"
+        RP["redpanda:9092<br/>(Event Broker)"]
+        PG["postgres:5432<br/>(Materialized State)"]
+        PGA["pgadmin:5050<br/>(DB Viewer)"]
+        ING["worker-ingestor"]
+        BF["worker-block-fetcher"]
+        SC["worker-state-consumer"]
+        HUN["worker-tx-hunter"]
+        API["fastapi:8000<br/>(API Layer)"]
+        UI["frontend:3000<br/>(Next.js Dashboard)"]
     end
 
     ING -->|"produce"| RP
@@ -333,6 +331,7 @@ graph TB
     PG -->|"read"| HUN
     HUN -->|"write"| PG
     PGA -->|"browse"| PG
+    API -->|"JSON"| UI
 ```
 
 ## 6. Project Structure
