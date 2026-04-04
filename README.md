@@ -15,16 +15,16 @@ An asynchronous, event-driven orchestration engine engineered to enforce **Fee F
   <img alt="Recent Blocks Analytics" src="docs/images/dark_recent_blocks.png">
 </picture>
 
-## Tech Stack
+## 🛠️ Tech Stack
 
 | Layer | Technology |
 |---|---|
-| **Runtime / Async** | ![Python](https://img.shields.io/badge/python-3670A0?style=for-the-badge&logo=python&logoColor=ffdd54) ![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi) |
-| **Event Broker** | ![Redpanda](https://img.shields.io/badge/redpanda-000000?style=for-the-badge&logo=apachekafka&logoColor=white) |
-| **Materialized State** | ![PostgreSQL](https://img.shields.io/badge/postgresql-4169e1?style=for-the-badge&logo=postgresql&logoColor=white) |
+| **Runtime / Async** | ![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=ffdd54) ![FastAPI](https://img.shields.io/badge/FastAPI-0.129-009688?style=for-the-badge&logo=fastapi&logoColor=white) |
+| **Event Broker** | ![Redpanda](https://img.shields.io/badge/Redpanda-Kafka_API-E3524D?style=for-the-badge&logo=apachekafka&logoColor=white) |
+| **Materialized State** | ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?style=for-the-badge&logo=postgresql&logoColor=white) |
 | **UI Presentation** | ![Next JS](https://img.shields.io/badge/Next-black?style=for-the-badge&logo=next.js&logoColor=white) |
 
-## Architecture
+## 🏗️ Architecture
 
 Event-Driven Architecture (EDA) with Clean Architecture layers and **Signal & Fetch** decoupling:
 
@@ -52,7 +52,7 @@ mempool.space WS ──→ Ingestor ──→ Redpanda ──→ State Consumer 
 | **API** | `src/api/` | Read-only FastAPI endpoints + inline market analytics |
 | **Core** | `src/core/config.py` | Centralized config via `pydantic-settings` |
 
-## Quick Start
+## 🚀 Quick Start
 
 ### Prerequisites
 - **Docker** & **Docker Compose**
@@ -81,17 +81,16 @@ just logs <name>
 - **FastAPI Docs:** `http://localhost:8000/docs`
 - **pgAdmin DB Viewer:** `http://localhost:5050` (see `.env` for credentials)
 
-### Shutting Down
+### Shutting Down & Utilities
 ```bash
-just down        # Stops all services and clears the network
-```
+just down             # Stops all services and clears the network
 just test             # Run backend test suite
 just check            # System health check (Python env + Docker)
 just sync             # Sync backend dependencies
 just --list           # Show all available recipes
 ```
 
-### Project Structure
+## 📂 Project Structure
 ```text
 ├── backend/
 │   ├── src/
@@ -109,7 +108,7 @@ just --list           # Show all available recipes
 └── docs/                     # ADRs, architecture, roadmap
 ```
 
-## Data Models (PostgreSQL)
+## 📊 Data Models (PostgreSQL)
 
 **`blocks` table** (confirmed blocks)
 | Column | Type | Description |
@@ -160,7 +159,7 @@ just --list           # Show all available recipes
 
 > **Convention:** All monetary values stored as integers in **Satoshis** to prevent floating-point precision errors.
 
-## API Endpoints
+## 🔌 API Endpoints
 
 | Method | Path | Description |
 |---|---|---|
@@ -169,7 +168,7 @@ just --list           # Show all available recipes
 | `GET` | `/api/orchestrator/status` | Market analytics: EMA, trend, real-time confidence (dynamic) |
 | `GET` | `/api/watchlist` | Tracked transactions with RBF/CPFP advisories |
 
-## Testing
+## 🧪 Testing
 
 ```bash
 just test    # 87 tests
@@ -186,14 +185,14 @@ just test    # 87 tests
 - `tests/test_queries.py`: Confidence calculation + premium guard (10 tests)
 - `tests/test_tx_hunter.py`: RBF/CPFP calculations + classification (11 tests)
 
-## Documentation
+## 📖 Documentation
 
 - [Architecture Guide](docs/architecture.md) - System design and component breakdown
 - [Data Dictionary](docs/data_dictionary.md) - Metric definitions, calculations, and data lineage
 - [Decision Log](docs/decisions.md) - Architectural decisions and project journal
 - [Strategy Roadmap](docs/strategy.md) - Product vision and phased roadmap
 
-## Development Workflow
+## ⚙️ Development Workflow
 
 ```bash
 just --list  # Show all available commands
