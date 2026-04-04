@@ -106,15 +106,42 @@ The project addresses the auction market for Bitcoin block space.
 - **[Infra]** Eradicated local host execution; unified microservices cluster under `docker-compose.yml`.
 - **[Deploy]** Standardized DX with pure Docker build commands and strict healthchecks.
 
-### Phase 9: Advanced RBF/CPFP Refinement — 🚀 NEXT
-- **[Logic]** Deep analytical refinement of the RBF/CPFP decision engine.
-- **[Goal]** Maximize Fee Fairness by optimizing the consensus rule engine beyond current baseline estimations.
+### Phase 9: Simplified Baseline Freeze — ✅ COMPLETED
+- **[Scope]** V0.9.0 architectural ceiling reached. The RBF/CPFP engine is a validated mathematical estimator, but remains API-dependent.
+- **[Action]** Frozen as stable baseline. See ADR-028 for the pivot rationale.
 
-### Phase 10: True Sovereignty — 🦁 Q4 2026 (Endgame)
-- **[Infra]** Deploy Bitcoin Core Node (Pruned Mode, `prune=550`) in Docker.
-- **[Backend]** Switch Ingestor from mempool.space API to Local RPC (`getblocktemplate`).
-- **Goal:** Eliminate the "Black Box" dependency. Validate fees ourselves in a trustless way.
+## ⚠️ Technical Disclaimer (V0.9.0)
+
+The fee decision engine in V0.9.0 is a **deterministic mathematical estimator**:
+- Fee recommendations derive from EMA convergence, trend analysis, and real-time median fee signals.
+- RBF advisories calculate replacement fees using weight-based estimation.
+- CPFP advisories estimate child transaction costs for parent confirmation.
+
+**Limitations — what V0.9.0 does NOT validate:**
+1. **BIP-125 Rule 3 (Absolute Fee):** The engine cannot verify that a replacement transaction pays a higher absolute fee than the sum of fees paid by all replaced transactions, because it lacks access to the original transaction's `vin`/`vout` structure.
+2. **Mempool Topology (Ancestry/Descendants):** CPFP calculations assume isolated transactions. Without raw mempool data, parent-child dependency chains are invisible — preventing accurate package relay fee estimation.
+3. **Eviction Policies:** Without a local mempool, the system cannot model `-maxmempool` eviction thresholds or dynamic `mempoolminfee` adjustments.
+
+> **V0.9.0 is an estimation tool, not a consensus validation engine.** These limitations are the primary drivers for Track B (ADR-028).
+
+## V0.9.0 End of Life & Track B: Sovereignty
+
+| Attribute | Value |
+|---|---|
+| **Final Tag** | `v0.9.0` |
+| **Freeze Date** | 2026-04-04 |
+| **Decision Record** | ADR-028 |
+| **Status** | 🔒 FROZEN — No further feature development on V0.9.0 architecture. |
+
+### Track B Roadmap
+
+| Phase | Focus | Description |
+|---|---|---|
+| **B1: Private Node** | Raw Data Sovereignty | Bitcoin Core (pruned, `prune=550`) in Docker. RPC ingestor (`getblocktemplate`, `getrawmempool verbose`). Eliminates third-party API dependency. |
+| **B2: High-Resolution Ingestion** | Transaction Topology | Raw `vin`/`vout` ingestion via ZMQ continuous event stream. Parent-child graph for true CPFP package relay modeling. BIP-125 Rule 3 validation. Reconstructs exact mempool state at any millisecond $T$. |
+| **B3: Analytical Columnar Storage** | OLAP Engine | Purpose-built columnar store for blocks, mempool snapshots, and transaction-level data. Sub-second aggregation over millions of rows. |
+| **B4: High-Fidelity Backtesting** | Strategy Simulation | Vectorized compute engine for out-of-core multi-dimensional fee strategy optimization. Full historical replay capability. |
 
 ---
 **Lead Engineer:** Israel (@ieshatchuell)
-**Status:** Phase 8 (Full Containerization) COMPLETED ✅. Phase 9 (Advanced RBF/CPFP Refinement) next.
+**Status:** V0.9.0 FROZEN 🔒. Track B (Sovereignty) next — see ADR-028.

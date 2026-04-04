@@ -2174,3 +2174,91 @@ Migrate the entire stack to **Full Containerization** and strip out legacy data 
 
 **Trade-offs:**
 1. Debugger attachment requires connecting to running Docker containers instead of native local execution.
+
+---
+
+## ADR-028: The Sovereign Pivot — V0.9.0 End of Life
+
+- **Date:** 2026-04-04
+- **Status:** Accepted
+- **Triggered by:** V0.9.0 architectural ceiling — Sampling vs. Ground Truth.
+
+### Context
+
+The V0.9.0 architecture achieved a mathematically validated fee optimization engine built on
+an Event-Driven Architecture (Redpanda + PostgreSQL + FastAPI). However, three engineering
+constraints block further analytical depth and prevent the system from evolving beyond an
+estimation baseline:
+
+**Constraint 1 — API Opacity:**
+The system depends entirely on pre-processed ("cooked") data from a third-party API
+(mempool.space). This creates a Black Box: we receive aggregated fee ranges, median fees,
+and projected block templates — but never raw transaction structure. Without access to
+`vin`/`vout`, `scriptPubKey`, and `witness` data, the engine cannot:
+- Validate **BIP-125 Rule 3 (Absolute Fee):** verify that a replacement transaction pays a
+  higher absolute fee than the sum of fees paid by all replaced transactions.
+- Model **Mempool Topology (Ancestry/Descendants):** map parent-child dependency chains
+  required for accurate CPFP package relay fee estimation.
+- Enforce **Eviction Policies:** model `-maxmempool` eviction thresholds or dynamic
+  `mempoolminfee` adjustments.
+
+**Constraint 2 — Data Resolution & Granularity:**
+The current architecture operates via **polling and snapshots** — periodic samples of the
+mempool state via WebSocket subscriptions and REST API calls. This sampling approach creates
+temporal gaps between events: transactions that enter and leave the mempool between polling
+intervals are invisible. High-fidelity analytics requires a **continuous event stream** (e.g.,
+ZMQ notifications from a local node) to reconstruct the exact mempool state at any arbitrary
+millisecond $T$. Without this resolution, backtesting and strategy simulation operate on
+interpolated data rather than ground truth.
+
+**Constraint 3 — Infrastructure Scaling:**
+The transition from aggregated API data to raw node data fundamentally changes the I/O
+profile. A single Bitcoin block can contain 3,000+ transactions with full `vin`/`vout`
+structure, multiplying data volume by orders of magnitude compared to the current summarized
+payloads. The existing row-oriented relational store (PostgreSQL) and eager-evaluation
+analytics layer are not designed for this scale. The Track B architecture requires:
+- A **columnar analytical store** for sub-second aggregation over millions of transaction rows.
+- A **vectorized compute engine** with lazy evaluation for out-of-core strategy simulations
+  that exceed available memory.
+
+### Decision — Track B: Sovereignty
+
+Pivot to a sovereign data architecture that addresses all three constraints:
+
+1. **Private Node Data Source:** Deploy a local Bitcoin Core node (pruned mode, `prune=550`)
+   to obtain raw mempool and block data via RPC (`getblocktemplate`, `getrawmempool verbose`).
+   Eliminates the third-party dependency and provides full transaction structure.
+
+2. **High-Resolution Ingestion:** Subscribe to ZMQ notifications (`rawtx`, `rawblock`) for
+   continuous, gap-free event streaming. Raw `vin`/`vout` ingestion enables parent-child
+   transaction graph construction and BIP-125 Rule 3 validation. Reconstructs exact mempool
+   state at any millisecond $T$.
+
+3. **Analytical Columnar Storage:** Replace the row-oriented store for analytical workloads
+   with a purpose-built columnar OLAP engine. Block, mempool snapshot, and transaction-level
+   data stored in a format optimized for time-series aggregation and multi-dimensional filtering.
+
+4. **Vectorized Compute Engine:** Introduce a lazy-evaluation, vectorized DataFrame engine
+   for the analytics layer. Strategy simulations and backtesting operate on out-of-core
+   datasets using streaming execution plans, eliminating memory-bound bottlenecks.
+
+5. **Retained Components:** The event broker (Redpanda) and presentation layer
+   (FastAPI + Next.js) are proven and remain unchanged.
+
+### Consequences
+
+**Positive:**
+1. Full data sovereignty — no third-party trust assumptions on fee calculations.
+2. Continuous event stream eliminates temporal gaps in mempool observation.
+3. Sub-second analytical queries over historical datasets (columnar storage).
+4. Memory-efficient strategy simulations via lazy vectorized evaluation.
+5. Ability to validate BIP-125 rules and model mempool eviction policies independently.
+
+**Trade-offs:**
+1. Operational complexity increases — full node requires ~550MB disk (pruned) + ongoing sync.
+2. Migration is non-trivial: new ingestor workers, new schema design, new storage deployment.
+3. V0.9.0 is frozen as read-only baseline — no further feature development on this architecture.
+
+### Related
+- [strategy.md](../strategy.md) — Track B Roadmap & Technical Disclaimer
+- Tag: `v0.9.0`
